@@ -11,13 +11,16 @@
         <div class="controls">
             <div class="controls-row">
                 <label for="weekSelect">Week:</label>
+                <button onclick="changeWeek(-1)" class="week-nav-btn">«</button>
                 <select id="weekSelect" onchange="loadSchedule()">
                     <option value="current">Current Week</option>
                 </select>
+                <button onclick="changeWeek(1)" class="week-nav-btn">»</button>
 
                 <button onclick="loadSchedule()">Load Schedule</button>
                 <button onclick="forceRefreshSchedule()">🔄 Refresh Scores</button>
                 <button onclick="showLeaderboard('season')">🏆 Leaderboard</button>
+                <button id="adminModeBtn" onclick="toggleAdminMode()" style="background-color: #6c757d;">🔒 Admin Mode: OFF</button>
                 <button onclick="window.print()">Print</button>
             </div>
 
