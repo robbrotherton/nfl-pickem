@@ -45,12 +45,23 @@ function initWeekSelector() {
     });
 }
 
-function changeWeek(direction) {
+async function changeWeek(direction) {
     const select = document.getElementById('weekSelect');
     const currentValue = select.value;
     
     const allOptions = Array.from(select.options).map(opt => opt.value);
-    const currentIndex = allOptions.indexOf(currentValue);
+    let currentIndex = allOptions.indexOf(currentValue);
+    
+    // If "current" is selected, determine the actual week number first
+    if (currentValue === 'current') {
+        const actualWeek = currentWeek || await getCurrentWeek();
+        // Find the option for this week number
+        currentIndex = allOptions.indexOf(actualWeek.toString());
+        if (currentIndex === -1) {
+            // If week number not found, default to week 1
+            currentIndex = 1;
+        }
+    }
     
     // Calculate new index
     let newIndex = currentIndex + direction;
@@ -455,9 +466,15 @@ async function loadPicksForWeek(week, season) {
 
 async function togglePick(gameId, gameDate, awayTeam, homeTeam, pickedTeam, playerName) {
     // Check if game has started (unless in admin mode)
-    if (!adminMode && new Date() >= new Date(gameDate)) {
-        alert('This game has already started!');
-        return;
+    const gameStarted = new Date() >= new Date(gameDate);
+    if (gameStarted && !adminMode) {
+        const confirmed = confirm('This game has already started. Do you want to change picks for completed games?');
+        if (confirmed) {
+            adminMode = true; // Enable admin mode for this session
+            showAdminIndicator();
+        } else {
+            return;
+        }
     }
     
     const weekSelect = document.getElementById('weekSelect').value;
@@ -520,6 +537,19 @@ async function togglePick(gameId, gameDate, awayTeam, homeTeam, pickedTeam, play
     });
 }
 
+function showAdminIndicator() {
+    const indicator = document.getElementById('adminModeIndicator');
+    indicator.style.display = 'inline-block';
+}
+
+async function exitAdminMode() {
+    adminMode = false;
+    const indicator = document.getElementById('adminModeIndicator');
+    indicator.style.display = 'none';
+    // Reload schedule to score picks and update colors
+    await loadSchedule();
+}
+
 // ========================================
 // SCHEDULE RENDERING
 // ========================================
@@ -528,6 +558,9 @@ async function loadSchedule() {
     const weekSelect = document.getElementById('weekSelect').value;
     const content = document.getElementById('content');
     const season = currentSeason;
+    
+    // Reset admin mode when changing weeks
+    adminMode = false;
     
     content.innerHTML = '<div class="loading">Loading schedule...</div>';
     
@@ -580,19 +613,6 @@ async function loadSchedule() {
     }
 }
 
-function toggleAdminMode() {
-    adminMode = !adminMode;
-    const btn = document.getElementById('adminModeBtn');
-    if (adminMode) {
-        btn.classList.add('active');
-        btn.textContent = '🔓';
-    } else {
-        btn.classList.remove('active');
-        btn.textContent = '🔒';
-    }
-    loadSchedule(); // Refresh to enable/disable buttons
-}
-
 async function renderScheduleTable(games, weekPlayers, season, week) {
     const allPicks = await loadPicksForWeek(week, season);
     const playerNames = weekPlayers.map(p => p.player_name);
@@ -607,7 +627,6 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
     html += '</tr></thead><tbody>';
     
     games.forEach(game => {
-        const gameStarted = !adminMode && new Date() >= new Date(game.game_date);
         const gameDate = new Date(game.game_date);
         let dateStr = gameDate.toLocaleDateString('en-US', { 
             weekday: 'short', 
@@ -686,13 +705,12 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
                                 (pick.is_correct === 1 && currentPick === game.away_team ? 'correct' : 
                                  pick.is_correct === 0 && currentPick === game.away_team ? 'incorrect' : '') 
                             : ''
-                        } ${gameStarted ? 'disabled' : ''}"
-                        onclick="${gameStarted ? '' : `togglePick('${game.id}', '${game.game_date}', '${game.away_team}', '${game.home_team}', '${game.away_team}', '${playerName.replace(/'/g, "\\'")}')`}"
+                        }"
+                        onclick="togglePick('${game.id}', '${game.game_date}', '${game.away_team}', '${game.home_team}', '${game.away_team}', '${playerName.replace(/'/g, "\\'")}')"
                         title="${game.away_team}"
                         data-game="${game.id}"
                         data-player="${playerName}"
                         data-team="${game.away_team}"
-                        style="${gameStarted ? 'cursor: default;' : 'cursor: pointer;'}"
                     >
                         ${game.away_logo ? `<img src="${game.away_logo}" alt="${game.away_abbr || awayAbbr}" class="pick-logo" onerror="this.style.display='none'">` : `<span class="pick-abbr">${game.away_abbr || awayAbbr}</span>`}
                     </div>
@@ -702,13 +720,12 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
                                 (pick.is_correct === 1 && currentPick === game.home_team ? 'correct' : 
                                  pick.is_correct === 0 && currentPick === game.home_team ? 'incorrect' : '') 
                             : ''
-                        } ${gameStarted ? 'disabled' : ''}"
-                        onclick="${gameStarted ? '' : `togglePick('${game.id}', '${game.game_date}', '${game.away_team}', '${game.home_team}', '${game.home_team}', '${playerName.replace(/'/g, "\\'")}')`}"
+                        }"
+                        onclick="togglePick('${game.id}', '${game.game_date}', '${game.away_team}', '${game.home_team}', '${game.home_team}', '${playerName.replace(/'/g, "\\'")}')"
                         title="${game.home_team}"
                         data-game="${game.id}"
                         data-player="${playerName}"
                         data-team="${game.home_team}"
-                        style="${gameStarted ? 'cursor: default;' : 'cursor: pointer;'}"
                     >
                         ${game.home_logo ? `<img src="${game.home_logo}" alt="${game.home_abbr || homeAbbr}" class="pick-logo" onerror="this.style.display='none'">` : `<span class="pick-abbr">${game.home_abbr || homeAbbr}</span>`}
                     </div>

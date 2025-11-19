@@ -8,8 +8,10 @@
 </head>
 <body>
     <div class="container">
+        <h1>NFL Pick'em</h1>
         <div class="controls">
             <div class="controls-row">
+                <button onclick="showLeaderboard('season')">🏆 Leaderboard</button>
                 <div class="week-selector-group">
                     <!-- <label for="weekSelect">Week:</label> -->
                     <button onclick="changeWeek(-1)" class="week-nav-btn">«</button>
@@ -20,9 +22,6 @@
                 </div>
 
                 <button onclick="forceRefreshSchedule()">🔄 Refresh Scores</button>
-                <button onclick="showLeaderboard('season')">🏆 Leaderboard</button>
-                <button id="adminModeBtn" onclick="toggleAdminMode()" class="icon-btn">🔒</button>
-                <button onclick="window.print()" class="icon-btn">🖨️</button>
             </div>
 
             <!-- Player Management -->
@@ -60,8 +59,11 @@
             </div>
         </div>
 
-        <h1>NFL Pick'em</h1>
-        <div class="week-title" id="weekTitle">Loading...</div>
+        <div class="week-title-row">
+            <div class="week-title" id="weekTitle">Loading...</div>
+            <button id="adminModeIndicator" onclick="exitAdminMode()" class="admin-indicator icon-btn" title="Exit Admin Mode" style="display: none;">🔓</button>
+            <button onclick="window.print()" class="print-btn icon-btn" title="Print">🖨️</button>
+        </div>
 
         <div id="content">
             <div class="loading">Loading schedule...</div>
