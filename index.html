@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFL Pick'em Sheet</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <label for="weekSelect">Week:</label>
+            <select id="weekSelect">
+                <option value="current">Current Week</option>
+            </select>
+
+            <button onclick="loadSchedule()">Load Schedule</button>
+            <button onclick="window.print()">Print</button>
+
+            <div class="member-inputs">
+                <label>Member Names:</label>
+                <input type="text" id="member1" placeholder="Member 1" value="Player 1">
+                <input type="text" id="member2" placeholder="Member 2" value="Player 2">
+                <input type="text" id="member3" placeholder="Member 3" value="Player 3">
+                <input type="text" id="member4" placeholder="Member 4" value="Player 4">
+            </div>
+        </div>
+
+        <h1>NFL Pick'em Sheet</h1>
+        <div class="week-title" id="weekTitle">Loading...</div>
+
+        <div id="content">
+            <div class="loading">Loading schedule...</div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

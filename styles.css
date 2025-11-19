@@ -1,0 +1,207 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    background-color: #f5f5f5;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background-color: white;
+    padding: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.controls {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+}
+
+.controls label {
+    margin-right: 10px;
+    font-weight: bold;
+}
+
+.controls select,
+.controls input {
+    margin-right: 20px;
+    padding: 5px 10px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+.controls button {
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.controls button:hover {
+    background-color: #0056b3;
+}
+
+.member-inputs {
+    margin-top: 10px;
+}
+
+.member-inputs input {
+    width: 120px;
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.week-title {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #666;
+    font-size: 18px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+th, td {
+    border: 1px solid #333;
+    padding: 10px;
+    text-align: center;
+}
+
+th {
+    background-color: #f0f0f0;
+    font-weight: bold;
+}
+
+.team-column {
+    text-align: left;
+    width: 30%;
+}
+
+.game-info {
+    font-size: 12px;
+    color: #666;
+}
+
+.matchup {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    margin-top: 5px;
+}
+
+.team-logo {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+}
+
+.team-name {
+    font-weight: bold;
+}
+
+.team-record {
+    color: #888;
+    font-size: 12px;
+}
+
+.vs {
+    color: #999;
+    margin: 0 5px;
+}
+
+.pick-column {
+    width: 17.5%;
+    background-color: #fff;
+}
+
+.member-name {
+    font-weight: bold;
+    min-height: 20px;
+}
+
+.pick-cell {
+    height: 50px;
+    background-color: #fff;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 18px;
+    color: #666;
+}
+
+.error {
+    text-align: center;
+    padding: 40px;
+    color: #d9534f;
+    font-size: 16px;
+}
+
+/* Print styles */
+@media print {
+    body {
+        padding: 0;
+        background-color: white;
+    }
+
+    .container {
+        box-shadow: none;
+        padding: 10px;
+    }
+
+    .controls {
+        display: none;
+    }
+
+    table {
+        page-break-inside: auto;
+    }
+
+    tr {
+        page-break-inside: avoid;
+        page-break-after: auto;
+    }
+
+    th, td {
+        padding: 8px 5px;
+        font-size: 11px;
+    }
+
+    .team-logo {
+        width: 18px;
+        height: 18px;
+    }
+
+    .pick-cell {
+        height: 40px;
+    }
+
+    h1 {
+        font-size: 20px;
+        margin-bottom: 5px;
+    }
+
+    .week-title {
+        font-size: 14px;
+        margin-bottom: 10px;
+    }
+}
