@@ -13,65 +13,170 @@ let adminMode = false; // Allow picks for past games
 // ========================================
 
 window.addEventListener('DOMContentLoaded', async () => {
-    initWeekSelector();
+    await initSeasonSelector();
+    await initWeekSelector();
     await loadSchedule();
 });
 
-function initWeekSelector() {
-    const select = document.getElementById('weekSelect');
-    select.innerHTML = '<option value="current">Current Week</option>';
+async function initSeasonSelector() {
+    const seasonSelect = document.getElementById('seasonSelect');
+    if (!seasonSelect) return;
     
-    // Regular season weeks
-    for (let i = 1; i <= 18; i++) {
+    const currentYear = new Date().getFullYear();
+    
+    try {
+        // Fetch available seasons from the database
+        const response = await fetch(`${API_BASE}/api/seasons`);
+        const seasons = await response.json();
+        
+        // If we have seasons in the database, use those
+        if (seasons && seasons.length > 0) {
+            seasons.forEach(season => {
+                const option = document.createElement('option');
+                option.value = season;
+                option.textContent = season;
+                seasonSelect.appendChild(option);
+            });
+            
+            // Set to current year if available, otherwise most recent season
+            if (seasons.includes(currentYear)) {
+                seasonSelect.value = currentYear;
+                currentSeason = currentYear;
+            } else {
+                seasonSelect.value = seasons[0]; // Most recent (they're sorted DESC)
+                currentSeason = seasons[0];
+            }
+        } else {
+            // Fallback: if no data in DB yet, just show current year
+            const option = document.createElement('option');
+            option.value = currentYear;
+            option.textContent = currentYear;
+            seasonSelect.appendChild(option);
+            seasonSelect.value = currentYear;
+            currentSeason = currentYear;
+        }
+    } catch (error) {
+        console.error('Error loading seasons:', error);
+        // Fallback: show current year
         const option = document.createElement('option');
-        option.value = i;
-        option.textContent = `Week ${i}`;
-        select.appendChild(option);
+        option.value = currentYear;
+        option.textContent = currentYear;
+        seasonSelect.appendChild(option);
+        seasonSelect.value = currentYear;
+        currentSeason = currentYear;
     }
     
-    // Playoff weeks
-    const playoffWeeks = [
-        { value: 'wildcard', label: 'Wild Card' },
-        { value: 'divisional', label: 'Divisional' },
-        { value: 'conference', label: 'Conference Championships' },
-        { value: 'superbowl', label: 'Super Bowl' }
-    ];
+    // Resize the dropdown
+    resizeSelect(seasonSelect);
+}
+
+async function initWeekSelector() {
+    const select = document.getElementById('weekSelect');
+    const selectTitle = document.getElementById('weekSelectTitle');
     
-    playoffWeeks.forEach((playoff, index) => {
-        const option = document.createElement('option');
-        option.value = playoff.value;
-        option.textContent = playoff.label;
-        select.appendChild(option);
-    });
+    // Get current week first
+    const current = await getCurrentWeek();
+    
+    // Populate both dropdowns with the same options
+    const populateSelect = (element) => {
+        if (!element) return;
+        
+        element.innerHTML = '';
+        
+        // Regular season weeks
+        for (let i = 1; i <= 18; i++) {
+            const option = document.createElement('option');
+            option.value = i;
+            option.textContent = `Week ${i}`;
+            element.appendChild(option);
+        }
+        
+        // Playoff weeks
+        const playoffWeeks = [
+            { value: 'wildcard', label: 'Wild Card' },
+            { value: 'divisional', label: 'Divisional' },
+            { value: 'conference', label: 'Conference Championships' },
+            { value: 'superbowl', label: 'Super Bowl' }
+        ];
+        
+        playoffWeeks.forEach((playoff, index) => {
+            const option = document.createElement('option');
+            option.value = playoff.value;
+            option.textContent = playoff.label;
+            element.appendChild(option);
+        });
+        
+        // Set to current week
+        element.value = current;
+    };
+    
+    populateSelect(select);
+    populateSelect(selectTitle);
+    
+    // Auto-resize dropdowns to fit content
+    if (selectTitle) resizeSelect(selectTitle);
+    if (select) resizeSelect(select);
+}
+
+function resizeSelect(selectElement) {
+    if (!selectElement) return;
+    
+    // Create a temporary element to measure the text width
+    const tempSpan = document.createElement('span');
+    tempSpan.style.visibility = 'hidden';
+    tempSpan.style.position = 'absolute';
+    tempSpan.style.whiteSpace = 'nowrap';
+    tempSpan.style.fontSize = window.getComputedStyle(selectElement).fontSize;
+    tempSpan.style.fontWeight = window.getComputedStyle(selectElement).fontWeight;
+    tempSpan.style.fontFamily = window.getComputedStyle(selectElement).fontFamily;
+    tempSpan.textContent = selectElement.options[selectElement.selectedIndex].text;
+    
+    document.body.appendChild(tempSpan);
+    const width = tempSpan.offsetWidth;
+    document.body.removeChild(tempSpan);
+    
+    // Add padding for the dropdown arrow and some breathing room
+    const finalWidth = (width + 40) + 'px';
+    selectElement.style.width = finalWidth;
+    console.log('Resized select to:', finalWidth, 'for text:', selectElement.options[selectElement.selectedIndex].text);
 }
 
 async function changeWeek(direction) {
-    const select = document.getElementById('weekSelect');
+    // Use the title dropdown if it exists, otherwise fall back to old one
+    const select = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const currentValue = select.value;
     
     const allOptions = Array.from(select.options).map(opt => opt.value);
     let currentIndex = allOptions.indexOf(currentValue);
     
-    // If "current" is selected, determine the actual week number first
-    if (currentValue === 'current') {
-        const actualWeek = currentWeek || await getCurrentWeek();
-        // Find the option for this week number
-        currentIndex = allOptions.indexOf(actualWeek.toString());
-        if (currentIndex === -1) {
-            // If week number not found, default to week 1
-            currentIndex = 1;
-        }
-    }
-    
     // Calculate new index
     let newIndex = currentIndex + direction;
     
-    // Clamp to valid range (skip "current" option at index 0)
-    newIndex = Math.max(1, Math.min(allOptions.length - 1, newIndex));
+    // Clamp to valid range
+    newIndex = Math.max(0, Math.min(allOptions.length - 1, newIndex));
     
-    // Update select and load
-    select.value = allOptions[newIndex];
+    // Update both selects if they exist
+    const newValue = allOptions[newIndex];
+    const otherSelect = document.getElementById('weekSelect');
+    if (select) {
+        select.value = newValue;
+        resizeSelect(select);
+    }
+    if (otherSelect) {
+        otherSelect.value = newValue;
+        resizeSelect(otherSelect);
+    }
+    
     loadSchedule();
+}
+
+function changeSeason() {
+    const seasonSelect = document.getElementById('seasonSelect');
+    if (seasonSelect) {
+        currentSeason = parseInt(seasonSelect.value);
+        resizeSelect(seasonSelect);
+        loadSchedule();
+    }
 }
 
 // Helper function to get season type and week number from selector value
@@ -208,16 +313,11 @@ async function loadGames(week, season, seasonType = 2) {
 }
 
 async function forceRefreshSchedule() {
-    const weekSelect = document.getElementById('weekSelect').value;
+    const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
     
-    let week;
-    if (weekSelect === 'current') {
-        week = await getCurrentWeek();
-    } else {
-        const weekInfo = getSeasonTypeAndWeek(weekSelect);
-        week = weekInfo.week;
-    }
+    const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
+    const week = weekInfo.week;
     
     // Delete cached games
     await fetch(`${API_BASE}/api/games/${season}/${week}`, {
@@ -284,15 +384,11 @@ async function loadWeekPlayers(season, week) {
 async function removePlayerFromWeek(playerName) {
     if (!confirm(`Remove ${playerName} from this week?`)) return;
     
-    const weekSelect = document.getElementById('weekSelect').value;
+    const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
-    let week;
     
-    if (weekSelect === 'current') {
-        week = currentWeek || await getCurrentWeek();
-    } else {
-        week = parseInt(weekSelect);
-    }
+    const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
+    const week = weekInfo.week;
     
     await fetch(`${API_BASE}/api/week-players/${season}/${week}/${encodeURIComponent(playerName)}`, {
         method: 'DELETE'
@@ -309,16 +405,11 @@ async function loadPastPlayers() {
 
 // Modal functions for adding players
 async function showAddPlayerMenu() {
-    const weekSelect = document.getElementById('weekSelect').value;
+    const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
-    let week;
     
-    if (weekSelect === 'current') {
-        week = currentWeek || await getCurrentWeek();
-    } else {
-        const weekInfo = getSeasonTypeAndWeek(weekSelect);
-        week = weekInfo.week;
-    }
+    const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
+    const week = weekInfo.week;
     
     // Get current players for this week
     const currentResponse = await fetch(`${API_BASE}/api/week-players/${season}/${week}`);
@@ -377,16 +468,11 @@ async function addNewPlayer() {
 }
 
 async function addPlayerByName(playerName) {
-    const weekSelect = document.getElementById('weekSelect').value;
+    const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
-    let week;
     
-    if (weekSelect === 'current') {
-        week = currentWeek || await getCurrentWeek();
-    } else {
-        const weekInfo = getSeasonTypeAndWeek(weekSelect);
-        week = weekInfo.week;
-    }
+    const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
+    const week = weekInfo.week;
     
     // Get current players to determine next display order
     const existingResponse = await fetch(`${API_BASE}/api/week-players/${season}/${week}`);
@@ -477,15 +563,11 @@ async function togglePick(gameId, gameDate, awayTeam, homeTeam, pickedTeam, play
         }
     }
     
-    const weekSelect = document.getElementById('weekSelect').value;
+    const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
-    let week;
     
-    if (weekSelect === 'current') {
-        week = currentWeek || await getCurrentWeek();
-    } else {
-        week = parseInt(weekSelect);
-    }
+    const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
+    const week = weekInfo.week;
     
     // Check if this team is already picked (deselect if so)
     const clickedDiv = event.target.closest('.team-pick-logo');
@@ -555,7 +637,7 @@ async function exitAdminMode() {
 // ========================================
 
 async function loadSchedule() {
-    const weekSelect = document.getElementById('weekSelect').value;
+    const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const content = document.getElementById('content');
     const season = currentSeason;
     
@@ -568,17 +650,21 @@ async function loadSchedule() {
         // Get week number and season type
         let week, seasonType, weekLabel;
         
-        if (weekSelect === 'current') {
-            week = await getCurrentWeek();
-            currentWeek = week;
-            seasonType = 2; // Assume regular season for "current"
-            weekLabel = `Week ${week}`;
-        } else {
-            const weekInfo = getSeasonTypeAndWeek(weekSelect);
-            week = weekInfo.week;
-            seasonType = weekInfo.type;
-            weekLabel = weekInfo.label;
-            currentWeek = week;
+        const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
+        week = weekInfo.week;
+        seasonType = weekInfo.type;
+        weekLabel = weekInfo.label;
+        currentWeek = week;
+        
+        // Sync both dropdowns
+        const otherSelect = document.getElementById('weekSelect');
+        if (weekSelect) {
+            weekSelect.value = weekSelect.value;
+            resizeSelect(weekSelect);
+        }
+        if (otherSelect) {
+            otherSelect.value = weekSelect.value;
+            resizeSelect(otherSelect);
         }
         
         console.log('Loading schedule for:', weekLabel, 'week:', week, 'type:', seasonType);
@@ -600,8 +686,7 @@ async function loadSchedule() {
         // Load past players for autocomplete
         await loadPastPlayers();
         
-        // Update UI
-        document.getElementById('weekTitle').textContent = `${weekLabel} - ${season} Season`;
+        // Update UI - dropdowns handle the title display
         renderActivePlayersUI(weekPlayers);
         
         // Render schedule

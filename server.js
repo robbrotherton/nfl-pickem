@@ -71,13 +71,26 @@ console.log('Database initialized ✓');
 // API ENDPOINTS
 // ========================================
 
-// Get all players (for autocomplete)
+// Get all players
 app.get('/api/players', (req, res) => {
     try {
         const players = db.prepare('SELECT * FROM players ORDER BY name').all();
         res.json(players);
     } catch (error) {
         console.error('Error fetching players:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get available seasons (years that have games in the database)
+app.get('/api/seasons', (req, res) => {
+    try {
+        const seasons = db.prepare(
+            'SELECT DISTINCT season FROM games ORDER BY season DESC'
+        ).all();
+        res.json(seasons.map(s => s.season));
+    } catch (error) {
+        console.error('Error fetching seasons:', error);
         res.status(500).json({ error: error.message });
     }
 });

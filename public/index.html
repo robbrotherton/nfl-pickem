@@ -12,16 +12,6 @@
         <div class="controls">
             <div class="controls-row">
                 <button onclick="showLeaderboard('season')">🏆 Leaderboard</button>
-                <div class="week-selector-group">
-                    <!-- <label for="weekSelect">Week:</label> -->
-                    <button onclick="changeWeek(-1)" class="week-nav-btn">«</button>
-                    <select id="weekSelect" onchange="loadSchedule()">
-                        <option value="current">Current Week</option>
-                    </select>
-                    <button onclick="changeWeek(1)" class="week-nav-btn">»</button>
-                </div>
-
-                <button onclick="forceRefreshSchedule()">🔄 Refresh Scores</button>
             </div>
 
             <!-- Player Management -->
@@ -60,9 +50,21 @@
         </div>
 
         <div class="week-title-row">
-            <div class="week-title" id="weekTitle">Loading...</div>
+            <button onclick="changeWeek(-1)" class="nav-arrow-btn">«</button>
+            <div class="week-title">
+                <select id="weekSelectTitle" onchange="loadSchedule()" class="week-dropdown">
+                </select>
+            </div>
+            <button onclick="changeWeek(1)" class="nav-arrow-btn">»</button>
+            <div class="week-title">
+                <select id="seasonSelect" onchange="changeSeason()" class="season-dropdown">
+                    <!-- Populated dynamically -->
+                </select>
+                <span> Season</span>
+            </div>
             <button id="adminModeIndicator" onclick="exitAdminMode()" class="admin-indicator icon-btn" title="Exit Admin Mode" style="display: none;">🔓</button>
             <button onclick="window.print()" class="print-btn icon-btn" title="Print">🖨️</button>
+            <button onclick="forceRefreshSchedule()" class="refresh-btn icon-btn" title="Refresh Scores">🔄</button>
         </div>
 
         <div id="content">
