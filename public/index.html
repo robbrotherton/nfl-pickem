@@ -10,41 +10,57 @@
     <div class="container">
         <div class="controls">
             <div class="controls-row">
-                <label for="weekSelect">Week:</label>
-                <button onclick="changeWeek(-1)" class="week-nav-btn">«</button>
-                <select id="weekSelect" onchange="loadSchedule()">
-                    <option value="current">Current Week</option>
-                </select>
-                <button onclick="changeWeek(1)" class="week-nav-btn">»</button>
+                <div class="week-selector-group">
+                    <!-- <label for="weekSelect">Week:</label> -->
+                    <button onclick="changeWeek(-1)" class="week-nav-btn">«</button>
+                    <select id="weekSelect" onchange="loadSchedule()">
+                        <option value="current">Current Week</option>
+                    </select>
+                    <button onclick="changeWeek(1)" class="week-nav-btn">»</button>
+                </div>
 
-                <button onclick="loadSchedule()">Load Schedule</button>
                 <button onclick="forceRefreshSchedule()">🔄 Refresh Scores</button>
                 <button onclick="showLeaderboard('season')">🏆 Leaderboard</button>
-                <button id="adminModeBtn" onclick="toggleAdminMode()" style="background-color: #6c757d;">🔒 Admin Mode: OFF</button>
-                <button onclick="window.print()">Print</button>
+                <button id="adminModeBtn" onclick="toggleAdminMode()" class="icon-btn">🔒</button>
+                <button onclick="window.print()" class="icon-btn">🖨️</button>
             </div>
 
             <!-- Player Management -->
             <div class="player-management">
                 <h3>Players This Week</h3>
                 <div id="activePlayers" class="active-players">
-                    <!-- Populated dynamically -->
-                </div>
-                <div class="add-player">
-                    <input 
-                        type="text" 
-                        id="newPlayerName" 
-                        placeholder="Add player..."
-                        list="pastPlayers"
-                        onkeypress="if(event.key==='Enter') addPlayerToWeek()"
-                    >
-                    <datalist id="pastPlayers"></datalist>
-                    <button onclick="addPlayerToWeek()">+ Add Player</button>
+                    <!-- Populated dynamically with player chips and + button -->
                 </div>
             </div>
         </div>
 
-        <h1>NFL Pick'em Sheet</h1>
+        <!-- Add Player Modal -->
+        <div id="addPlayerModal" class="modal" onclick="closeAddPlayerMenu(event)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3>Add Player</h3>
+                    <button onclick="closeAddPlayerMenu()" class="modal-close">✕</button>
+                </div>
+                <div id="playerList" class="player-list">
+                    <!-- Populated dynamically -->
+                </div>
+                <div class="new-player-option" onclick="showNewPlayerInput()">
+                    <strong>+ New Player</strong>
+                </div>
+                <div id="newPlayerInput" class="new-player-input" style="display: none;">
+                    <input 
+                        type="text" 
+                        id="newPlayerName" 
+                        placeholder="Enter name..."
+                        onkeypress="if(event.key==='Enter') addNewPlayer()"
+                    >
+                    <button onclick="addNewPlayer()">Add</button>
+                    <button onclick="cancelNewPlayer()">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <h1>NFL Pick'em</h1>
         <div class="week-title" id="weekTitle">Loading...</div>
 
         <div id="content">

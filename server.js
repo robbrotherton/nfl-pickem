@@ -177,6 +177,20 @@ app.delete('/api/games/:season/:week', (req, res) => {
     }
 });
 
+// Delete a pick (for deselecting) - MUST be before GET /api/picks/:season/:week
+app.delete('/api/picks/:player/:gameId', (req, res) => {
+    try {
+        const { player, gameId } = req.params;
+        db.prepare(
+            'DELETE FROM picks WHERE player_name = ? AND game_id = ?'
+        ).run(decodeURIComponent(player), gameId);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error deleting pick:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get picks for a week
 app.get('/api/picks/:season/:week', (req, res) => {
     try {
@@ -205,20 +219,6 @@ app.post('/api/picks', (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('Error saving pick:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Delete a pick (for deselecting)
-app.delete('/api/picks/:player/:gameId', (req, res) => {
-    try {
-        const { player, gameId } = req.params;
-        db.prepare(
-            'DELETE FROM picks WHERE player_name = ? AND game_id = ?'
-        ).run(decodeURIComponent(player), gameId);
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Error deleting pick:', error);
         res.status(500).json({ error: error.message });
     }
 });

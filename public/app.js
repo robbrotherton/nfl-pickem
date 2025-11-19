@@ -20,33 +20,65 @@ window.addEventListener('DOMContentLoaded', async () => {
 function initWeekSelector() {
     const select = document.getElementById('weekSelect');
     select.innerHTML = '<option value="current">Current Week</option>';
+    
+    // Regular season weeks
     for (let i = 1; i <= 18; i++) {
         const option = document.createElement('option');
         option.value = i;
         option.textContent = `Week ${i}`;
         select.appendChild(option);
     }
+    
+    // Playoff weeks
+    const playoffWeeks = [
+        { value: 'wildcard', label: 'Wild Card' },
+        { value: 'divisional', label: 'Divisional' },
+        { value: 'conference', label: 'Conference Championships' },
+        { value: 'superbowl', label: 'Super Bowl' }
+    ];
+    
+    playoffWeeks.forEach((playoff, index) => {
+        const option = document.createElement('option');
+        option.value = playoff.value;
+        option.textContent = playoff.label;
+        select.appendChild(option);
+    });
 }
 
 function changeWeek(direction) {
     const select = document.getElementById('weekSelect');
     const currentValue = select.value;
     
-    let newWeek;
+    const allOptions = Array.from(select.options).map(opt => opt.value);
+    const currentIndex = allOptions.indexOf(currentValue);
     
-    if (currentValue === 'current') {
-        // If on "Current Week", go to specific week number
-        newWeek = currentWeek + direction;
-    } else {
-        newWeek = parseInt(currentValue) + direction;
-    }
+    // Calculate new index
+    let newIndex = currentIndex + direction;
     
-    // Clamp between 1 and 18
-    newWeek = Math.max(1, Math.min(18, newWeek));
+    // Clamp to valid range (skip "current" option at index 0)
+    newIndex = Math.max(1, Math.min(allOptions.length - 1, newIndex));
     
     // Update select and load
-    select.value = newWeek;
+    select.value = allOptions[newIndex];
     loadSchedule();
+}
+
+// Helper function to get season type and week number from selector value
+function getSeasonTypeAndWeek(weekValue) {
+    const playoffMap = {
+        'wildcard': { week: 1, type: 3, label: 'Wild Card' },
+        'divisional': { week: 2, type: 3, label: 'Divisional' },
+        'conference': { week: 3, type: 3, label: 'Conference Championships' },
+        'superbowl': { week: 4, type: 3, label: 'Super Bowl' }
+    };
+    
+    if (playoffMap[weekValue]) {
+        return playoffMap[weekValue];
+    }
+    
+    // Regular season
+    const weekNum = parseInt(weekValue);
+    return { week: weekNum, type: 2, label: `Week ${weekNum}` };
 }
 
 // ========================================
@@ -94,10 +126,10 @@ function shouldRefreshGames(cachedGames) {
     return false;
 }
 
-async function fetchAndCacheGames(week, season) {
-    console.log(`Fetching games from ESPN for week ${week}...`);
+async function fetchAndCacheGames(week, season, seasonType = 2) {
+    console.log(`Fetching games from ESPN for week ${week}, season type ${seasonType}...`);
     
-    const response = await fetch(`${ESPN_API_BASE}/scoreboard?week=${week}&seasontype=2`);
+    const response = await fetch(`${ESPN_API_BASE}/scoreboard?week=${week}&seasontype=${seasonType}`);
     const data = await response.json();
     
     if (!data.events || data.events.length === 0) {
@@ -127,10 +159,14 @@ async function fetchAndCacheGames(week, season) {
             home_logo: homeTeam.team.logo || '',
             away_record: awayTeam.records?.[0]?.summary || '0-0',
             home_record: homeTeam.records?.[0]?.summary || '0-0',
-            away_score: isCompleted ? parseInt(awayTeam.score) : null,
-            home_score: isCompleted ? parseInt(homeTeam.score) : null,
+            away_score: isCompleted || isInProgress ? parseInt(awayTeam.score) : null,
+            home_score: isCompleted || isInProgress ? parseInt(homeTeam.score) : null,
             winner: isCompleted ? competition.competitors.find(t => t.winner)?.team.displayName : null,
-            status: isCompleted ? 'final' : isInProgress ? 'in_progress' : 'scheduled'
+            status: isCompleted ? 'final' : isInProgress ? 'in_progress' : 'scheduled',
+            // Live status info (not saved to DB, just used for display)
+            status_detail: event.status.type.detail || '',
+            period: event.status.period || null,
+            clock: event.status.displayClock || ''
         };
         
         // Save to database
@@ -147,14 +183,14 @@ async function fetchAndCacheGames(week, season) {
     return games;
 }
 
-async function loadGames(week, season) {
+async function loadGames(week, season, seasonType = 2) {
     // Try cache first
     const response = await fetch(`${API_BASE}/api/games/${season}/${week}`);
     const cachedGames = await response.json();
     
     // Check if we need to refresh
     if (shouldRefreshGames(cachedGames)) {
-        return await fetchAndCacheGames(week, season);
+        return await fetchAndCacheGames(week, season, seasonType);
     }
     
     return cachedGames;
@@ -168,7 +204,8 @@ async function forceRefreshSchedule() {
     if (weekSelect === 'current') {
         week = await getCurrentWeek();
     } else {
-        week = parseInt(weekSelect);
+        const weekInfo = getSeasonTypeAndWeek(weekSelect);
+        week = weekInfo.week;
     }
     
     // Delete cached games
@@ -233,12 +270,8 @@ async function loadWeekPlayers(season, week) {
     return players || [];
 }
 
-async function addPlayerToWeek() {
-    const playerName = document.getElementById('newPlayerName').value.trim();
-    if (!playerName) {
-        alert('Please enter a player name');
-        return;
-    }
+async function removePlayerFromWeek(playerName) {
+    if (!confirm(`Remove ${playerName} from this week?`)) return;
     
     const weekSelect = document.getElementById('weekSelect').value;
     const season = currentSeason;
@@ -248,6 +281,100 @@ async function addPlayerToWeek() {
         week = currentWeek || await getCurrentWeek();
     } else {
         week = parseInt(weekSelect);
+    }
+    
+    await fetch(`${API_BASE}/api/week-players/${season}/${week}/${encodeURIComponent(playerName)}`, {
+        method: 'DELETE'
+    });
+    
+    await loadSchedule();
+}
+
+async function loadPastPlayers() {
+    const response = await fetch(`${API_BASE}/api/players`);
+    const players = await response.json();
+    return players;
+}
+
+// Modal functions for adding players
+async function showAddPlayerMenu() {
+    const weekSelect = document.getElementById('weekSelect').value;
+    const season = currentSeason;
+    let week;
+    
+    if (weekSelect === 'current') {
+        week = currentWeek || await getCurrentWeek();
+    } else {
+        const weekInfo = getSeasonTypeAndWeek(weekSelect);
+        week = weekInfo.week;
+    }
+    
+    // Get current players for this week
+    const currentResponse = await fetch(`${API_BASE}/api/week-players/${season}/${week}`);
+    const currentPlayers = await currentResponse.json();
+    const currentPlayerNames = currentPlayers.map(p => p.player_name);
+    
+    // Get all past players
+    const allPlayers = await loadPastPlayers();
+    const availablePlayers = allPlayers.filter(p => !currentPlayerNames.includes(p.name));
+    
+    // Populate player list
+    const playerList = document.getElementById('playerList');
+    if (availablePlayers.length === 0) {
+        playerList.innerHTML = '<div style="color: #999; font-style: italic;">No existing players available</div>';
+    } else {
+        playerList.innerHTML = availablePlayers.map(player => 
+            `<div class="player-option" onclick="addExistingPlayer('${player.name}')">${player.name}</div>`
+        ).join('');
+    }
+    
+    // Show modal
+    document.getElementById('addPlayerModal').classList.add('show');
+}
+
+function closeAddPlayerMenu(event) {
+    if (event && event.target.className !== 'modal') return;
+    document.getElementById('addPlayerModal').classList.remove('show');
+    document.getElementById('newPlayerInput').style.display = 'none';
+    document.getElementById('newPlayerName').value = '';
+}
+
+function showNewPlayerInput() {
+    document.getElementById('newPlayerInput').style.display = 'block';
+    document.getElementById('newPlayerName').focus();
+}
+
+function cancelNewPlayer() {
+    document.getElementById('newPlayerInput').style.display = 'none';
+    document.getElementById('newPlayerName').value = '';
+}
+
+async function addExistingPlayer(playerName) {
+    await addPlayerByName(playerName);
+    closeAddPlayerMenu();
+}
+
+async function addNewPlayer() {
+    const playerName = document.getElementById('newPlayerName').value.trim();
+    if (!playerName) {
+        alert('Please enter a player name');
+        return;
+    }
+    
+    await addPlayerByName(playerName);
+    closeAddPlayerMenu();
+}
+
+async function addPlayerByName(playerName) {
+    const weekSelect = document.getElementById('weekSelect').value;
+    const season = currentSeason;
+    let week;
+    
+    if (weekSelect === 'current') {
+        week = currentWeek || await getCurrentWeek();
+    } else {
+        const weekInfo = getSeasonTypeAndWeek(weekSelect);
+        week = weekInfo.week;
     }
     
     // Get current players to determine next display order
@@ -276,42 +403,7 @@ async function addPlayerToWeek() {
         })
     });
     
-    document.getElementById('newPlayerName').value = '';
     await loadSchedule();
-}
-
-async function removePlayerFromWeek(playerName) {
-    if (!confirm(`Remove ${playerName} from this week?`)) return;
-    
-    const weekSelect = document.getElementById('weekSelect').value;
-    const season = currentSeason;
-    let week;
-    
-    if (weekSelect === 'current') {
-        week = currentWeek || await getCurrentWeek();
-    } else {
-        week = parseInt(weekSelect);
-    }
-    
-    await fetch(`${API_BASE}/api/week-players/${season}/${week}/${encodeURIComponent(playerName)}`, {
-        method: 'DELETE'
-    });
-    
-    await loadSchedule();
-}
-
-async function loadPastPlayers() {
-    const response = await fetch(`${API_BASE}/api/players`);
-    const players = await response.json();
-    
-    const datalist = document.getElementById('pastPlayers');
-    datalist.innerHTML = '';
-    
-    players.forEach(player => {
-        const option = document.createElement('option');
-        option.value = player.name;
-        datalist.appendChild(option);
-    });
 }
 
 function renderActivePlayersUI(weekPlayers) {
@@ -319,19 +411,26 @@ function renderActivePlayersUI(weekPlayers) {
     container.innerHTML = '';
     
     if (weekPlayers.length === 0) {
-        container.innerHTML = '<p class="no-players">No players yet. Add some below!</p>';
-        return;
+        container.innerHTML = '<p class="no-players">No players yet. Click + to add!</p>';
+    } else {
+        weekPlayers.forEach(player => {
+            const chip = document.createElement('div');
+            chip.className = 'player-chip';
+            chip.innerHTML = `
+                ${player.player_name}
+                <button onclick="removePlayerFromWeek('${player.player_name.replace(/'/g, "\\'")}')">✕</button>
+            `;
+            container.appendChild(chip);
+        });
     }
     
-    weekPlayers.forEach(player => {
-        const chip = document.createElement('div');
-        chip.className = 'player-chip';
-        chip.innerHTML = `
-            ${player.player_name}
-            <button onclick="removePlayerFromWeek('${player.player_name.replace(/'/g, "\\'")}')">✕</button>
-        `;
-        container.appendChild(chip);
-    });
+    // Add the + button as a div to match player chips
+    const addBtn = document.createElement('div');
+    addBtn.className = 'add-player-btn';
+    addBtn.title = 'Add Player';
+    addBtn.textContent = '+';
+    addBtn.onclick = showAddPlayerMenu;
+    container.appendChild(addBtn);
 }
 
 // ========================================
@@ -433,23 +532,29 @@ async function loadSchedule() {
     content.innerHTML = '<div class="loading">Loading schedule...</div>';
     
     try {
-        // Get week number
-        let week;
+        // Get week number and season type
+        let week, seasonType, weekLabel;
+        
         if (weekSelect === 'current') {
             week = await getCurrentWeek();
             currentWeek = week;
+            seasonType = 2; // Assume regular season for "current"
+            weekLabel = `Week ${week}`;
         } else {
-            week = parseInt(weekSelect);
+            const weekInfo = getSeasonTypeAndWeek(weekSelect);
+            week = weekInfo.week;
+            seasonType = weekInfo.type;
+            weekLabel = weekInfo.label;
             currentWeek = week;
         }
         
-        console.log('Loading schedule for week:', week);
+        console.log('Loading schedule for:', weekLabel, 'week:', week, 'type:', seasonType);
         
         // Load games (from cache or ESPN)
-        const games = await loadGames(week, season);
+        const games = await loadGames(week, season, seasonType);
         
         if (!games || games.length === 0) {
-            content.innerHTML = `<div class="error">No games found for week ${week}.<br>Try selecting a different week.</div>`;
+            content.innerHTML = `<div class="error">No games found for ${weekLabel}.<br>Try selecting a different week.</div>`;
             return;
         }
         
@@ -463,7 +568,7 @@ async function loadSchedule() {
         await loadPastPlayers();
         
         // Update UI
-        document.getElementById('weekTitle').textContent = `Week ${week} - ${season} Season`;
+        document.getElementById('weekTitle').textContent = `${weekLabel} - ${season} Season`;
         renderActivePlayersUI(weekPlayers);
         
         // Render schedule
@@ -479,11 +584,11 @@ function toggleAdminMode() {
     adminMode = !adminMode;
     const btn = document.getElementById('adminModeBtn');
     if (adminMode) {
-        btn.textContent = '🔓 Admin Mode: ON';
-        btn.style.backgroundColor = '#dc3545';
+        btn.classList.add('active');
+        btn.textContent = '🔓';
     } else {
-        btn.textContent = '🔒 Admin Mode: OFF';
-        btn.style.backgroundColor = '#6c757d';
+        btn.classList.remove('active');
+        btn.textContent = '🔒';
     }
     loadSchedule(); // Refresh to enable/disable buttons
 }
@@ -504,7 +609,7 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
     games.forEach(game => {
         const gameStarted = !adminMode && new Date() >= new Date(game.game_date);
         const gameDate = new Date(game.game_date);
-        const dateStr = gameDate.toLocaleDateString('en-US', { 
+        let dateStr = gameDate.toLocaleDateString('en-US', { 
             weekday: 'short', 
             month: 'short', 
             day: 'numeric',
@@ -512,27 +617,42 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
             minute: '2-digit'
         });
         
-        // Show final score if game is complete
-        let scoreDisplay = '';
+        // Add FINAL to date string if game is complete
         if (game.status === 'final') {
-            scoreDisplay = `<div class="final-score">Final: ${game.away_team} ${game.away_score}, ${game.home_team} ${game.home_score}</div>`;
+            dateStr += ' - FINAL';
         } else if (game.status === 'in_progress') {
-            scoreDisplay = `<div class="in-progress">⚡ In Progress</div>`;
+            // Show quarter and clock if available
+            if (game.period && game.clock) {
+                const quarterMap = { 1: 'Q1', 2: 'Q2', 3: 'Q3', 4: 'Q4', 5: 'OT' };
+                const quarter = quarterMap[game.period] || `Q${game.period}`;
+                dateStr += ` - ${quarter} ${game.clock}`;
+            } else if (game.status_detail) {
+                dateStr += ` - ${game.status_detail}`;
+            } else {
+                dateStr += ' - IN PROGRESS';
+            }
         }
         
         html += '<tr>';
         html += `<td class="team-column">
             <div class="game-info">${dateStr}</div>
             <div class="matchup">
-                ${game.away_logo ? `<img src="${game.away_logo}" alt="${game.away_abbr || game.away_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
-                <span class="team-name ${game.winner === game.away_team ? 'winner' : ''}">${game.away_team}</span>
-                ${game.away_record ? `<span class="team-record">(${game.away_record})</span>` : ''}
+                <div class="team-info">
+                    ${game.away_logo ? `<img src="${game.away_logo}" alt="${game.away_abbr || game.away_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
+                    <div class="team-details">
+                        <span class="team-name ${game.winner === game.away_team ? 'winner' : ''}">${game.away_abbr || game.away_team}</span>
+                        ${game.status === 'final' || game.status === 'in_progress' ? `<span class="team-record">(${game.away_score})</span>` : game.away_record ? `<span class="team-record">${game.away_record}</span>` : ''}
+                    </div>
+                </div>
                 <span class="vs">@</span>
-                ${game.home_logo ? `<img src="${game.home_logo}" alt="${game.home_abbr || game.home_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
-                <span class="team-name ${game.winner === game.home_team ? 'winner' : ''}">${game.home_team}</span>
-                ${game.home_record ? `<span class="team-record">(${game.home_record})</span>` : ''}
+                <div class="team-info">
+                    ${game.home_logo ? `<img src="${game.home_logo}" alt="${game.home_abbr || game.home_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
+                    <div class="team-details">
+                        <span class="team-name ${game.winner === game.home_team ? 'winner' : ''}">${game.home_abbr || game.home_team}</span>
+                        ${game.status === 'final' || game.status === 'in_progress' ? `<span class="team-record">(${game.home_score})</span>` : game.home_record ? `<span class="team-record">${game.home_record}</span>` : ''}
+                    </div>
+                </div>
             </div>
-            ${scoreDisplay}
         </td>`;
         
         // Add pick columns for each player
