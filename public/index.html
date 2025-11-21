@@ -70,6 +70,18 @@
         <div id="content">
             <div class="loading">Loading schedule...</div>
         </div>
+        <!-- Game History Modal -->
+        <div id="gameHistoryModal" class="modal" onclick="closeGameHistoryModal(event)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h3 id="gameHistoryTitle">Game Histories</h3>
+                    <button onclick="closeGameHistoryModal()" class="modal-close">✕</button>
+                </div>
+                <div id="gameHistoryBody">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="app.js"></script>

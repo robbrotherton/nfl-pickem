@@ -138,7 +138,6 @@ function resizeSelect(selectElement) {
     // Add padding for the dropdown arrow and some breathing room
     const finalWidth = (width + 40) + 'px';
     selectElement.style.width = finalWidth;
-    console.log('Resized select to:', finalWidth, 'for text:', selectElement.options[selectElement.selectedIndex].text);
 }
 
 async function changeWeek(direction) {
@@ -243,14 +242,29 @@ function shouldRefreshGames(cachedGames) {
 }
 
 async function fetchAndCacheGames(week, season, seasonType = 2) {
-    console.log(`Fetching games from ESPN for week ${week}, season type ${seasonType}...`);
-    
     const response = await fetch(`${ESPN_API_BASE}/scoreboard?week=${week}&seasontype=${seasonType}`);
     const data = await response.json();
     
     if (!data.events || data.events.length === 0) {
         return null;
     }
+    
+    // Helper to get team logos - use nflfastr CDN for wordmarks
+    const getTeamLogos = (team) => {
+        let abbr = team.team.abbreviation.toUpperCase(); // Uppercase required for nflfastr URLs
+        
+        // Handle abbreviation mismatches between ESPN and nflfastr
+        const abbrMap = {
+            'WSH': 'WAS'  // Washington Commanders: ESPN uses WSH, nflfastr uses WAS
+        };
+        
+        const wordmarkAbbr = abbrMap[abbr] || abbr;
+        
+        const logo = team.team.logo || '';
+        // nflfastr hosts wordmarks on GitHub - use raw.githubusercontent.com for direct access
+        const wordmark = `https://raw.githubusercontent.com/nflverse/nflverse-pbp/master/wordmarks/${wordmarkAbbr}.png`;
+        return { logo, wordmark };
+    };
     
     // Process and cache each game
     const games = [];
@@ -262,6 +276,9 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
         const isCompleted = event.status.type.completed;
         const isInProgress = event.status.type.state === 'in';
         
+        const awayLogos = getTeamLogos(awayTeam);
+        const homeLogos = getTeamLogos(homeTeam);
+        
         const gameData = {
             id: event.id,
             season: season,
@@ -271,8 +288,10 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
             home_team: homeTeam.team.displayName,
             away_abbr: awayTeam.team.abbreviation,
             home_abbr: homeTeam.team.abbreviation,
-            away_logo: awayTeam.team.logo || '',
-            home_logo: homeTeam.team.logo || '',
+            away_logo: awayLogos.logo,
+            home_logo: homeLogos.logo,
+            away_wordmark: awayLogos.wordmark,
+            home_wordmark: homeLogos.wordmark,
             away_record: awayTeam.records?.[0]?.summary || '0-0',
             home_record: homeTeam.records?.[0]?.summary || '0-0',
             away_score: isCompleted || isInProgress ? parseInt(awayTeam.score) : null,
@@ -318,13 +337,17 @@ async function forceRefreshSchedule() {
     
     const weekInfo = getSeasonTypeAndWeek(weekSelect.value);
     const week = weekInfo.week;
+    const seasonType = weekInfo.type;
     
     // Delete cached games
-    await fetch(`${API_BASE}/api/games/${season}/${week}`, {
+    const deleteResponse = await fetch(`${API_BASE}/api/games/${season}/${week}`, {
         method: 'DELETE'
     });
     
-    // Reload
+    // Force fetch from ESPN (bypassing cache)
+    const games = await fetchAndCacheGames(week, season, seasonType);
+    
+    // Reload schedule (will now use fresh data from DB)
     await loadSchedule();
 }
 
@@ -667,8 +690,6 @@ async function loadSchedule() {
             resizeSelect(otherSelect);
         }
         
-        console.log('Loading schedule for:', weekLabel, 'week:', week, 'type:', seasonType);
-        
         // Load games (from cache or ESPN)
         const games = await loadGames(week, season, seasonType);
         
@@ -720,12 +741,10 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
             hour: 'numeric',
             minute: '2-digit'
         });
-        
         // Add FINAL to date string if game is complete
         if (game.status === 'final') {
             dateStr += ' - FINAL';
         } else if (game.status === 'in_progress') {
-            // Show quarter and clock if available
             if (game.period && game.clock) {
                 const quarterMap = { 1: 'Q1', 2: 'Q2', 3: 'Q3', 4: 'Q4', 5: 'OT' };
                 const quarter = quarterMap[game.period] || `Q${game.period}`;
@@ -737,8 +756,16 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
             }
         }
         
+        // Add status-based class for background color
+        let statusClass = '';
+        if (game.status === 'final') {
+            statusClass = 'game-final';
+        } else if (game.status === 'in_progress') {
+            statusClass = 'game-in-progress';
+        }
+        
         html += '<tr>';
-        html += `<td class="team-column">
+        html += `<td class="team-column game-history-cell ${statusClass}" style="cursor:pointer;" onclick="showGameHistoryModal('${game.away_team.replace(/'/g, "\\'")}', '${game.home_team.replace(/'/g, "\\'")}', ${season})">
             <div class="game-info">${dateStr}</div>
             <div class="matchup">
                 <div class="team-info">
@@ -827,6 +854,129 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
 }
 
 // ========================================
+// GAME HISTORY MODAL
+// ========================================
+
+async function showGameHistoryModal(awayTeam, homeTeam, season) {
+    const modal = document.getElementById('gameHistoryModal');
+    const title = document.getElementById('gameHistoryTitle');
+    const body = document.getElementById('gameHistoryBody');
+    
+    title.textContent = `${awayTeam} vs ${homeTeam} - Game Histories`;
+    body.innerHTML = '<div class="loading">Loading game histories...</div>';
+    
+    // Show modal
+    modal.classList.add('show');
+    
+    try {
+        // Fetch both teams' game histories in parallel
+        const [awayResponse, homeResponse] = await Promise.all([
+            fetch(`/api/games/${season}/team/${encodeURIComponent(awayTeam)}`),
+            fetch(`/api/games/${season}/team/${encodeURIComponent(homeTeam)}`)
+        ]);
+        
+        const [awayGames, homeGames] = await Promise.all([
+            awayResponse.json(),
+            homeResponse.json()
+        ]);
+        
+        // Helper to fix wordmark URLs for teams with abbreviation mismatches
+        const fixWordmarkUrl = (url) => {
+            if (!url) return url;
+            // Replace WSH with WAS in the URL
+            return url.replace('/WSH.png', '/WAS.png');
+        };
+        
+        // Get team logos and abbreviations from first game
+        const awayLogo = awayGames.length > 0 ? (awayGames[0].away_team === awayTeam ? awayGames[0].away_logo : awayGames[0].home_logo) : '';
+        const homeLogo = homeGames.length > 0 ? (homeGames[0].away_team === homeTeam ? homeGames[0].away_logo : homeGames[0].home_logo) : '';
+        let awayWordmark = awayGames.length > 0 ? (awayGames[0].away_team === awayTeam ? awayGames[0].away_wordmark : awayGames[0].home_wordmark) : '';
+        let homeWordmark = homeGames.length > 0 ? (homeGames[0].away_team === homeTeam ? homeGames[0].away_wordmark : homeGames[0].home_wordmark) : '';
+        
+        // Fix wordmark URLs for abbreviation mismatches
+        awayWordmark = fixWordmarkUrl(awayWordmark);
+        homeWordmark = fixWordmarkUrl(homeWordmark);
+        
+        const awayAbbr = awayGames.length > 0 ? (awayGames[0].away_team === awayTeam ? awayGames[0].away_abbr : awayGames[0].home_abbr) : awayTeam;
+        const homeAbbr = homeGames.length > 0 ? (homeGames[0].away_team === homeTeam ? homeGames[0].away_abbr : homeGames[0].home_abbr) : homeTeam;
+        
+        // Build table with weeks as rows, teams as columns
+        let tableHtml = '<table class="game-history-table"><thead><tr>';
+        tableHtml += '<th>Week</th>';
+        tableHtml += `<th><img src="${awayWordmark || awayLogo}" alt="${awayAbbr}" class="team-wordmark" onerror="this.src='${awayLogo}'; this.className='team-logo';"> </th>`;
+        tableHtml += `<th><img src="${homeWordmark || homeLogo}" alt="${homeAbbr}" class="team-wordmark" onerror="this.src='${homeLogo}'; this.className='team-logo';"> </th>`;
+        tableHtml += '</tr></thead><tbody>';
+        
+        // Get all unique weeks from both teams
+        const allWeeks = new Set([...awayGames.map(g => g.week), ...homeGames.map(g => g.week)]);
+        const sortedWeeks = Array.from(allWeeks).sort((a, b) => a - b);
+        
+        sortedWeeks.forEach(week => {
+            const awayGame = awayGames.find(g => g.week === week);
+            const homeGame = homeGames.find(g => g.week === week);
+            
+            tableHtml += `<tr><td><strong>Week ${week}</strong></td>`;
+            
+            // Away team cell
+            if (awayGame && awayGame.status === 'final') {
+                const isHome = awayGame.home_team === awayTeam;
+                const opponent = isHome ? awayGame.away_team : awayGame.home_team;
+                const oppAbbr = isHome ? awayGame.away_abbr : awayGame.home_abbr;
+                const oppLogo = isHome ? awayGame.away_logo : awayGame.home_logo;
+                const vsAt = isHome ? 'vs' : '@';
+                const teamScore = isHome ? awayGame.home_score : awayGame.away_score;
+                const oppScore = isHome ? awayGame.away_score : awayGame.home_score;
+                const won = teamScore > oppScore;
+                const resultClass = won ? 'win' : 'loss';
+                const resultText = won ? 'W' : 'L';
+                
+                tableHtml += `<td>
+                    <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
+                    <div>${teamScore}-${oppScore} <span class="${resultClass}">${resultText}</span></div>
+                </td>`;
+            } else {
+                tableHtml += '<td><em>—</em></td>';
+            }
+            
+            // Home team cell
+            if (homeGame && homeGame.status === 'final') {
+                const isHome = homeGame.home_team === homeTeam;
+                const opponent = isHome ? homeGame.away_team : homeGame.home_team;
+                const oppAbbr = isHome ? homeGame.away_abbr : homeGame.home_abbr;
+                const oppLogo = isHome ? homeGame.away_logo : homeGame.home_logo;
+                const vsAt = isHome ? 'vs' : '@';
+                const teamScore = isHome ? homeGame.home_score : homeGame.away_score;
+                const oppScore = isHome ? homeGame.away_score : homeGame.home_score;
+                const won = teamScore > oppScore;
+                const resultClass = won ? 'win' : 'loss';
+                const resultText = won ? 'W' : 'L';
+                
+                tableHtml += `<td>
+                    <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
+                    <div>${teamScore}-${oppScore} <span class="${resultClass}">${resultText}</span></div>
+                </td>`;
+            } else {
+                tableHtml += '<td><em>—</em></td>';
+            }
+            
+            tableHtml += '</tr>';
+        });
+        
+        tableHtml += '</tbody></table>';
+        body.innerHTML = tableHtml;
+        
+    } catch (error) {
+        body.innerHTML = `<div class="error">Error loading game histories: ${error.message}</div>`;
+    }
+}
+
+function closeGameHistoryModal(event) {
+    if (event && event.target.className !== 'modal') return;
+    const modal = document.getElementById('gameHistoryModal');
+    modal.classList.remove('show');
+}
+
+// ========================================
 // LEADERBOARD
 // ========================================
 
@@ -877,11 +1027,29 @@ async function showLeaderboard(viewType = 'season') {
     if (standings.length === 0) {
         html += `<tr><td colspan="${viewType === 'season' ? '6' : '5'}" style="text-align: center; padding: 20px;">No scored picks yet!</td></tr>`;
     } else {
+        // Calculate ranks with tie handling
+        let currentRank = 1;
+        let previousWins = null;
+        let previousLosses = null;
+        
         standings.forEach((record, index) => {
             const total = record.wins + record.losses;
             const pct = total > 0 ? (record.wins / total * 100).toFixed(1) : '0.0';
-            const rank = index + 1;
-            const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
+            
+            // Check if this record is tied with the previous one
+            if (index > 0 && record.wins === previousWins && record.losses === previousLosses) {
+                // Same rank as previous (tie)
+            } else {
+                // New rank
+                currentRank = index + 1;
+            }
+            
+            previousWins = record.wins;
+            previousLosses = record.losses;
+            
+            const rank = currentRank;
+            const isLastPlace = (index === standings.length - 1) && (rank !== 1); // Last and not tied for first
+            const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : isLastPlace ? '😢' : rank;
             
             html += `
                 <tr class="rank-${rank}">

@@ -40,6 +40,8 @@ db.exec(`
         home_abbr TEXT,
         away_logo TEXT,
         home_logo TEXT,
+        away_wordmark TEXT,
+        home_wordmark TEXT,
         away_record TEXT,
         home_record TEXT,
         away_score INTEGER,
@@ -65,7 +67,22 @@ db.exec(`
     CREATE INDEX IF NOT EXISTS idx_picks_player ON picks(player_name, season);
 `);
 
-console.log('Database initialized ✓');
+// Migrate existing games table to add wordmark columns if they don't exist
+try {
+    db.exec(`
+        ALTER TABLE games ADD COLUMN away_wordmark TEXT;
+    `);
+} catch (e) {
+    // Column already exists, ignore
+}
+
+try {
+    db.exec(`
+        ALTER TABLE games ADD COLUMN home_wordmark TEXT;
+    `);
+} catch (e) {
+    // Column already exists, ignore
+}
 
 // ========================================
 // API ENDPOINTS
@@ -161,15 +178,15 @@ app.get('/api/games/:season/:week', (req, res) => {
 app.post('/api/games', (req, res) => {
     try {
         const { id, season, week, game_date, away_team, home_team, away_abbr, home_abbr, 
-                away_logo, home_logo, away_record, home_record, away_score, home_score, winner, status } = req.body;
+                away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status } = req.body;
         
         db.prepare(`
             INSERT OR REPLACE INTO games 
             (id, season, week, game_date, away_team, home_team, away_abbr, home_abbr, 
-             away_logo, home_logo, away_record, home_record, away_score, home_score, winner, status, last_updated) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+             away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status, last_updated) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         `).run(id, season, week, game_date, away_team, home_team, away_abbr, home_abbr, 
-               away_logo, home_logo, away_record, home_record, away_score, home_score, winner, status);
+               away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status);
         
         res.json({ success: true });
     } catch (error) {
@@ -186,6 +203,25 @@ app.delete('/api/games/:season/:week', (req, res) => {
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting games:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get all games for a specific team in a season
+app.get('/api/games/:season/team/:teamName', (req, res) => {
+    try {
+        const { season, teamName } = req.params;
+        const decodedTeamName = decodeURIComponent(teamName);
+        
+        const games = db.prepare(`
+            SELECT * FROM games 
+            WHERE season = ? AND (away_team = ? OR home_team = ?)
+            ORDER BY week ASC
+        `).all(season, decodedTeamName, decodedTeamName);
+        
+        res.json(games);
+    } catch (error) {
+        console.error('Error fetching team games:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -266,7 +302,10 @@ app.get('/api/leaderboard/:season', (req, res) => {
             FROM picks
             WHERE season = ? AND is_correct IS NOT NULL
             GROUP BY player_name
-            ORDER BY wins DESC
+            ORDER BY 
+                CAST(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
+                NULLIF(COUNT(*), 0) DESC,
+                wins DESC
         `).all(season);
         
         res.json(standings);
@@ -289,7 +328,10 @@ app.get('/api/leaderboard/:season/:week', (req, res) => {
             FROM picks
             WHERE season = ? AND week = ? AND is_correct IS NOT NULL
             GROUP BY player_name
-            ORDER BY wins DESC
+            ORDER BY 
+                CAST(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
+                NULLIF(COUNT(*), 0) DESC,
+                wins DESC
         `).all(season, week);
         
         res.json(standings);
