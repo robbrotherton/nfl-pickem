@@ -165,7 +165,7 @@ app.get('/api/games/:season/:week', (req, res) => {
     try {
         const { season, week } = req.params;
         const games = db.prepare(
-            'SELECT * FROM games WHERE season = ? AND week = ? ORDER BY game_date'
+            'SELECT * FROM games WHERE season = ? AND week = ? ORDER BY game_date, home_team'
         ).all(season, week);
         res.json(games);
     } catch (error) {
