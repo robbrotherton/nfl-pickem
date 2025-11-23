@@ -314,6 +314,13 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
         games.push(gameData);
     }
     
+    // Sort games by date/time, then alphabetically by home team
+    games.sort((a, b) => {
+        const dateCompare = new Date(a.game_date) - new Date(b.game_date);
+        if (dateCompare !== 0) return dateCompare;
+        return a.home_team.localeCompare(b.home_team);
+    });
+    
     // Return the games with full data
     return games;
 }
