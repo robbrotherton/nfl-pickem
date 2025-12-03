@@ -180,6 +180,11 @@
             border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
 
+        .standings-table tr:hover {
+            background: rgba(255, 255, 255, 0.1) !important;
+            transition: background 0.2s ease;
+        }
+
         .standings-table tr.highlight {
             background: rgba(200, 56, 3, 0.2);
             border-left: 4px solid #C83803;
@@ -212,11 +217,18 @@
             height: 24px;
             line-height: 24px;
             text-align: center;
-            background: #4CAF50;
             border-radius: 50%;
             font-size: 0.85em;
             font-weight: bold;
             margin-right: 8px;
+        }
+
+        .playoff-seed.division-winner {
+            background: #4CAF50;
+        }
+
+        .playoff-seed.wildcard {
+            background: #FFA726;
         }
 
         /* Key Games */
@@ -345,6 +357,33 @@
             font-size: 0.9em;
             color: #4CAF50;
             margin-left: 10px;
+        }
+
+        /* Simulation mode buttons */
+        .sim-mode-btn {
+            width: 48px;
+            height: 48px;
+            font-size: 24px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .sim-mode-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: rgba(255, 255, 255, 0.4);
+            transform: scale(1.05);
+        }
+
+        .sim-mode-btn.active {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.6);
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
         }
 
         /* Loading spinner */

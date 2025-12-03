@@ -7,10 +7,13 @@ const CURRENT_SEASON = 2025; // 2025 season
 const CURRENT_WEEK = 14; // We're in week 14, looking at remaining games
 
 // Global state
-let nfcStandings = [];
+let allStandings = []; // All NFL teams
 let allGames = [];
 let criticalGames = [];
 let userOutcomes = {}; // gameId -> 'home' or 'away'
+let currentBestCase = null; // Store best case scenario
+let currentWorstCase = null; // Store worst case scenario
+let useWeightedSimulation = false; // Toggle between random (dice) and weighted (by record)
 
 // ========================================
 // INITIALIZATION
@@ -25,7 +28,7 @@ async function initializeApp() {
         console.log('🏈 Starting playoff calculator...');
         
         // Fetch data from ESPN
-        await fetchNFCStandings();
+        await fetchStandings();
         await fetchRemainingGames();
         
         // Identify critical games
@@ -53,8 +56,8 @@ async function initializeApp() {
 // DATA FETCHING
 // ========================================
 
-async function fetchNFCStandings() {
-    console.log('📊 Fetching NFC standings...');
+async function fetchStandings() {
+    console.log('📊 Fetching NFL standings...');
     
     // Build standings from scoreboard data (weeks 1-current)
     const teamMap = new Map();
@@ -95,43 +98,42 @@ async function fetchNFCStandings() {
         }
     }
     
-    // Convert map to array and filter to NFC teams
-    // NFC teams: NFC North (CHI, DET, GB, MIN), NFC South (ATL, CAR, NO, TB), 
-    //            NFC East (DAL, NYG, PHI, WAS), NFC West (ARI, LA, SF, SEA)
-    const nfcTeamAbbrs = [
-        // NFC North
-        'CHI', 'DET', 'GB', 'MIN',
-        // NFC South
-        'ATL', 'CAR', 'NO', 'TB',
-        // NFC East
-        'DAL', 'NYG', 'PHI', 'WAS',
-        // NFC West
-        'ARI', 'LAR', 'SF', 'SEA'
-    ];
-    
+    // Division map for all NFL teams
     const divisionMap = {
+        // NFC North
         'CHI': 'NFC North', 'DET': 'NFC North', 'GB': 'NFC North', 'MIN': 'NFC North',
+        // NFC South
         'ATL': 'NFC South', 'CAR': 'NFC South', 'NO': 'NFC South', 'TB': 'NFC South',
-        'DAL': 'NFC East', 'NYG': 'NFC East', 'PHI': 'NFC East', 'WAS': 'NFC East',
-        'ARI': 'NFC West', 'LAR': 'NFC West', 'SF': 'NFC West', 'SEA': 'NFC West'
+        // NFC East
+        'DAL': 'NFC East', 'NYG': 'NFC East', 'PHI': 'NFC East', 'WAS': 'NFC East', 'WSH': 'NFC East',
+        // NFC West
+        'ARI': 'NFC West', 'LAR': 'NFC West', 'SF': 'NFC West', 'SEA': 'NFC West',
+        // AFC North
+        'BAL': 'AFC North', 'CIN': 'AFC North', 'CLE': 'AFC North', 'PIT': 'AFC North',
+        // AFC South
+        'HOU': 'AFC South', 'IND': 'AFC South', 'JAX': 'AFC South', 'JAC': 'AFC South', 'TEN': 'AFC South',
+        // AFC East
+        'BUF': 'AFC East', 'MIA': 'AFC East', 'NE': 'AFC East', 'NYJ': 'AFC East',
+        // AFC West
+        'DEN': 'AFC West', 'KC': 'AFC West', 'LV': 'AFC West', 'OAK': 'AFC West', 'LAC': 'AFC West'
     };
     
-    nfcStandings = Array.from(teamMap.values())
-        .filter(team => nfcTeamAbbrs.includes(team.abbr))
+    allStandings = Array.from(teamMap.values())
         .map(team => ({
             ...team,
-            division: divisionMap[team.abbr] || 'NFC Unknown'
+            division: divisionMap[team.abbr] || 'Unknown',
+            conference: divisionMap[team.abbr]?.startsWith('NFC') ? 'NFC' : 'AFC'
         }));
     
     // Sort by wins (descending)
-    nfcStandings.sort((a, b) => {
+    allStandings.sort((a, b) => {
         if (b.wins !== a.wins) return b.wins - a.wins;
         if (a.losses !== b.losses) return a.losses - b.losses;
         return 0;
     });
     
-    console.log(`✅ Loaded ${nfcStandings.length} NFC teams`);
-    console.log('Top 5 teams:', nfcStandings.slice(0, 5).map(t => `${t.abbr} ${t.wins}-${t.losses}`).join(', '));
+    console.log(`✅ Loaded ${allStandings.length} NFL teams`);
+    console.log('Top 5 teams:', allStandings.slice(0, 5).map(t => `${t.abbr} ${t.wins}-${t.losses}`).join(', '));
 }
 
 async function fetchRemainingGames() {
@@ -181,22 +183,38 @@ async function fetchRemainingGames() {
 }
 
 // ========================================
-// GAME FILTERING
+// HELPER FUNCTIONS
+// ========================================
+
+function getConferenceStandings(conference) {
+    return allStandings.filter(t => t.conference === conference);
+}
+
+function getTargetConferenceStandings() {
+    const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
+    const conference = targetTeam?.conference || 'NFC';
+    return getConferenceStandings(conference);
+}
+
+// ========================================
+// CRITICAL GAMES IDENTIFICATION
 // ========================================
 
 function identifyCriticalGames() {
     console.log('🎯 Identifying critical games...');
     
-    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
     const targetDivision = targetTeam?.division || 'NFC North';
-    const divisionTeams = nfcStandings.filter(t => t.division === targetDivision);
+    const targetConference = targetTeam?.conference || 'NFC';
+    const conferenceStandings = getConferenceStandings(targetConference);
+    const divisionTeams = allStandings.filter(t => t.division === targetDivision);
     
     criticalGames = allGames.filter(game => {
-        const homeIsNFC = nfcStandings.some(t => t.abbr === game.homeTeam.abbr);
-        const awayIsNFC = nfcStandings.some(t => t.abbr === game.awayTeam.abbr);
+        const homeInConference = conferenceStandings.some(t => t.abbr === game.homeTeam.abbr);
+        const awayInConference = conferenceStandings.some(t => t.abbr === game.awayTeam.abbr);
         
-        // Skip games with no NFC teams
-        if (!homeIsNFC && !awayIsNFC) return false;
+        // Skip games with no teams from target's conference
+        if (!homeInConference && !awayInConference) return false;
         
         const homeInDivision = divisionTeams.some(t => t.abbr === game.homeTeam.abbr);
         const awayInDivision = divisionTeams.some(t => t.abbr === game.awayTeam.abbr);
@@ -211,16 +229,16 @@ function identifyCriticalGames() {
             return true;
         }
         
-        // Priority 3: Division teams vs anyone in NFC
-        if ((homeInDivision && awayIsNFC) || (awayInDivision && homeIsNFC)) {
+        // Priority 3: Division teams vs anyone in conference
+        if ((homeInDivision && awayInConference) || (awayInDivision && homeInConference)) {
             return true;
         }
         
         // Priority 4: Wild card contenders (teams within 3 games of 7th place)
-        const seventhPlace = nfcStandings[6];
+        const seventhPlace = allStandings[6];
         if (seventhPlace) {
-            const homeTeamStanding = nfcStandings.find(t => t.abbr === game.homeTeam.abbr);
-            const awayTeamStanding = nfcStandings.find(t => t.abbr === game.awayTeam.abbr);
+            const homeTeamStanding = allStandings.find(t => t.abbr === game.homeTeam.abbr);
+            const awayTeamStanding = allStandings.find(t => t.abbr === game.awayTeam.abbr);
             
             const homeInContention = homeTeamStanding && 
                 Math.abs(homeTeamStanding.wins - seventhPlace.wins) <= 3;
@@ -250,7 +268,7 @@ function calculateGameImpact(game) {
     let score = 0;
     let label = 'Low';
     
-    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
     const targetDivision = targetTeam?.division || 'NFC North';
     
     // Target team game = highest priority
@@ -259,14 +277,14 @@ function calculateGameImpact(game) {
         label = 'Critical';
     }
     // Both teams in target's division
-    else if (nfcStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === targetDivision &&
-             nfcStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === targetDivision) {
+    else if (allStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === targetDivision &&
+             allStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === targetDivision) {
         score = 80;
         label = 'High';
     }
     // One team in target's division
-    else if (nfcStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === targetDivision ||
-             nfcStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === targetDivision) {
+    else if (allStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === targetDivision ||
+             allStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === targetDivision) {
         score = 60;
         label = 'Medium';
     }
@@ -284,18 +302,14 @@ function calculateGameImpact(game) {
 // ========================================
 
 function calculatePlayoffTeams(standings) {
-    // Group by division
-    const divisions = {
-        'NFC North': [],
-        'NFC South': [],
-        'NFC East': [],
-        'NFC West': []
-    };
+    // Group by division (dynamically to support both NFC and AFC)
+    const divisions = {};
     
     standings.forEach(team => {
-        if (divisions[team.division]) {
-            divisions[team.division].push(team);
+        if (!divisions[team.division]) {
+            divisions[team.division] = [];
         }
+        divisions[team.division].push(team);
     });
     
     // Get division winners (best record in each division)
@@ -342,7 +356,11 @@ function calculatePlayoffTeams(standings) {
 
 function simulateScenario(outcomes) {
     // Clone current standings
-    const standings = JSON.parse(JSON.stringify(nfcStandings));
+    const standings = JSON.parse(JSON.stringify(allStandings));
+    
+    // Get target team's conference
+    const targetTeam = standings.find(t => t.abbr === TARGET_TEAM);
+    const targetConference = targetTeam?.conference || 'NFC';
     
     // Apply outcomes to update records
     criticalGames.forEach(game => {
@@ -365,15 +383,16 @@ function simulateScenario(outcomes) {
         }
     });
     
-    // Calculate playoff teams
-    const playoffTeams = calculatePlayoffTeams(standings);
+    // Filter to conference standings and calculate playoff teams
+    const conferenceStandings = standings.filter(t => t.conference === targetConference);
+    const playoffTeams = calculatePlayoffTeams(conferenceStandings);
     
-    // Check if Bears made it
+    // Check if target team made it
     const bearsMadePlayoffs = playoffTeams.some(t => t.abbr === TARGET_TEAM);
     const bearsSeed = playoffTeams.find(t => t.abbr === TARGET_TEAM)?.seed || null;
     
-    // Calculate Bears' position in division
-    const bearsTeam = standings.find(t => t.abbr === TARGET_TEAM);
+    // Calculate target team's position in division
+    const bearsTeam = conferenceStandings.find(t => t.abbr === TARGET_TEAM);
     const divisionTeams = standings.filter(t => t.division === bearsTeam.division)
         .sort((a, b) => {
             if (b.wins !== a.wins) return b.wins - a.wins;
@@ -382,9 +401,9 @@ function simulateScenario(outcomes) {
         });
     const bearsDivisionRank = divisionTeams.findIndex(t => t.abbr === TARGET_TEAM) + 1;
     
-    // Calculate Bears' position in wildcard race (among non-division winners)
+    // Calculate target team's position in wildcard race (among non-division winners)
     const divisionWinners = playoffTeams.filter(t => t.seed <= 4);
-    const wildCardPool = standings.filter(team => 
+    const wildCardPool = conferenceStandings.filter(team => 
         !divisionWinners.find(dw => dw.id === team.id)
     ).sort((a, b) => {
         if (b.wins !== a.wins) return b.wins - a.wins;
@@ -407,6 +426,33 @@ function simulateScenario(outcomes) {
 // SCENARIO GENERATION
 // ========================================
 
+function getGameOutcome(game) {
+    // Determine outcome based on simulation mode
+    if (useWeightedSimulation) {
+        // Weighted by win percentage
+        const homeTeam = allStandings.find(t => t.abbr === game.homeTeam.abbr);
+        const awayTeam = allStandings.find(t => t.abbr === game.awayTeam.abbr);
+        
+        if (!homeTeam || !awayTeam) {
+            return Math.random() < 0.5 ? 'home' : 'away';
+        }
+        
+        const homeWinPct = homeTeam.winPct || 0.5;
+        const awayWinPct = awayTeam.winPct || 0.5;
+        
+        // Simple weighted probability: home team gets their win% vs away team's win%
+        // Also add slight home field advantage (about 55% for equal teams)
+        const homeFieldBonus = 0.05;
+        const totalWeight = homeWinPct + awayWinPct;
+        const homeProb = totalWeight > 0 ? (homeWinPct / totalWeight) + homeFieldBonus : 0.5 + homeFieldBonus;
+        
+        return Math.random() < homeProb ? 'home' : 'away';
+    } else {
+        // Random 50/50
+        return Math.random() < 0.5 ? 'home' : 'away';
+    }
+}
+
 function calculateAndDisplayScenarios() {
     console.log('🔮 Calculating scenarios...');
     
@@ -421,7 +467,7 @@ function calculateAndDisplayScenarios() {
         
         criticalGames.forEach(game => {
             if (!outcomes[game.id]) {
-                outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
+                outcomes[game.id] = getGameOutcome(game);
             }
         });
         
@@ -441,9 +487,12 @@ function calculateAndDisplayScenarios() {
     const bestCase = findBestCaseScenario();
     const worstCase = findWorstCaseScenario();
     
+    // Store globally so they can be applied later
+    currentBestCase = bestCase;
+    currentWorstCase = worstCase;
+    
     // Update display
     updatePlayoffChancesDisplay(playoffProbability, bearsPlayoffCount, numSamples, bestCase, worstCase);
-    updateBestCaseDisplay(bestCase);
 }
 
 function findBestCaseScenario() {
@@ -495,9 +544,9 @@ function findBestCaseScenario() {
     );
     
     // Get division rivals (other teams in same division)
-    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
     const targetDivision = targetTeam?.division || 'NFC North';
-    const divisionRivals = nfcStandings
+    const divisionRivals = allStandings
         .filter(t => t.division === targetDivision && t.abbr !== TARGET_TEAM)
         .map(t => t.abbr);
     
@@ -621,9 +670,9 @@ function findWorstCaseScenario() {
     );
     
     // Get division rivals (other teams in same division)
-    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
     const targetDivision = targetTeam?.division || 'NFC North';
-    const divisionRivals = nfcStandings
+    const divisionRivals = allStandings
         .filter(t => t.division === targetDivision && t.abbr !== TARGET_TEAM)
         .map(t => t.abbr);
     
@@ -703,86 +752,146 @@ function findWorstCaseScenario() {
 // ========================================
 
 function renderApp() {
-    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
     const teamName = targetTeam ? targetTeam.name : 'Team';
+    const teamDivision = targetTeam ? targetTeam.division : '';
+    const teamNameWithDivision = targetTeam ? `${teamName} (${teamDivision})` : 'Team';
     
     // Update page title
-    document.getElementById('pageTitle').textContent = `🏈 ${teamName} Playoff Calculator`;
+    document.getElementById('pageTitle').textContent = `🏈 ${teamNameWithDivision} Playoff Calculator`;
     
     document.getElementById('app').innerHTML = `
-        <div class="team-selector-container" style="text-align: center; margin-bottom: 20px;">
-            <label for="teamSelector" style="font-size: 1.2em; margin-right: 10px;">Select Team:</label>
-            <select id="teamSelector" style="font-size: 1.1em; padding: 8px 15px; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; border: 2px solid rgba(255,255,255,0.3); cursor: pointer;">
-                ${nfcStandings.map(team => `
-                    <option value="${team.abbr}" ${team.abbr === TARGET_TEAM ? 'selected' : ''}>
-                        ${team.name} (${team.wins}-${team.losses})
-                    </option>
-                `).join('')}
-            </select>
-        </div>
-        
-        <div class="playoff-chances" id="playoffChances">
-            <div class="playoff-chances-left">
-                <h2>${teamName} Playoff Chances</h2>
-                <div class="playoff-percentage" id="playoffPercentage">---%</div>
-                <div class="playoff-status" id="playoffStatus">Calculating scenarios...</div>
-            </div>
-            <div class="playoff-chances-right">
-                <div class="scenario-item">
-                    <h3>🎯 Best Case Scenario</h3>
-                    <p id="bestCaseScenario">Loading...</p>
-                </div>
-                <div class="scenario-item">
-                    <h3>⚠️ Worst Case Scenario</h3>
-                    <p id="worstCaseScenario">Loading...</p>
-                </div>
-            </div>
-        </div>
+        <h2 style="text-align: center; margin: 30px 0 20px 0; font-size: 1.5em;">
+            Week ${CURRENT_WEEK} Standings (${18 - CURRENT_WEEK} regular season games remaining)
+        </h2>
         
         <div class="main-grid">
             <div class="card">
                 <h2>📊 NFC Standings</h2>
-                <div id="standingsTable"></div>
+                <div id="nfcStandingsTable"></div>
             </div>
             
             <div class="card">
-                <h2>🎯 Best Case Scenario</h2>
-                <div id="bestCase"></div>
+                <h2>📊 AFC Standings</h2>
+                <div id="afcStandingsTable"></div>
+            </div>
+        </div>
+        
+        <div class="playoff-chances" id="playoffChances">
+            <div class="playoff-chances-left">
+                <h2>${teamNameWithDivision} Playoff Chances</h2>
+                <div class="playoff-percentage" id="playoffPercentage">---%</div>
+                <div class="playoff-status" id="playoffStatus">Calculating scenarios...</div>
+                <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center; align-items: center;">
+                    <button id="randomModeBtn" class="sim-mode-btn active" onclick="toggleSimulationMode(false)" title="Random outcomes (50/50)">
+                        🎲
+                    </button>
+                    <button id="weightedModeBtn" class="sim-mode-btn" onclick="toggleSimulationMode(true)" title="Weighted by team records">
+                        ⚖️
+                    </button>
+                </div>
+            </div>
+            <div class="playoff-chances-right">
+                <div class="scenario-item" id="bestCaseScenarioItem" style="cursor: pointer; padding: 12px; border-radius: 8px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+                    <h3>🎯 Best Case Scenario</h3>
+                    <p id="bestCaseScenario">Loading...</p>
+                    <p style="font-size: 0.85em; opacity: 0.7; margin-top: 8px;">Click to apply outcomes</p>
+                </div>
+                <div class="scenario-item" id="worstCaseScenarioItem" style="cursor: pointer; padding: 12px; border-radius: 8px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+                    <h3>⚠️ Worst Case Scenario</h3>
+                    <p id="worstCaseScenario">Loading...</p>
+                    <p style="font-size: 0.85em; opacity: 0.7; margin-top: 8px;">Click to apply outcomes</p>
+                </div>
             </div>
         </div>
         
         <div class="card">
             <h2>🏈 Critical Games (${criticalGames.length})</h2>
             <p style="margin-bottom: 15px; color: #aaa; font-size: 0.95em;">
-                Click outcomes to lock them in and see how it affects ${teamName} playoff chances
+                Click outcomes to lock them in and see how it affects ${teamNameWithDivision} playoff chances
+                <button id="clearAllBtn" style="margin-left: 15px; padding: 6px 12px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.3); color: white; border-radius: 6px; cursor: pointer; font-size: 0.9em;" onclick="clearAllOutcomes()">Clear All</button>
             </p>
             <div id="keyGames"></div>
         </div>
     `;
     
-    renderStandings();
+    renderBothStandings();
     renderKeyGames();
     
-    // Add team selector change handler
-    document.getElementById('teamSelector').addEventListener('change', (e) => {
-        TARGET_TEAM = e.target.value;
-        userOutcomes = {}; // Reset selected outcomes
-        identifyCriticalGames(); // Recalculate critical games for new team
-        renderApp(); // Re-render with new team
-        calculateAndDisplayScenarios();
-    });
+    // Add click handlers for scenario items
+    document.getElementById('bestCaseScenarioItem').addEventListener('click', applyBestCase);
+    document.getElementById('worstCaseScenarioItem').addEventListener('click', applyWorstCase);
 }
 
-function renderStandings() {
-    const playoffTeams = calculatePlayoffTeams(nfcStandings);
+function applyBestCase() {
+    if (!currentBestCase) return;
+    
+    // Apply all outcomes from best case scenario
+    userOutcomes = { ...currentBestCase.outcomes };
+    
+    // Re-render games and recalculate
+    renderKeyGames();
+    calculateAndDisplayScenarios();
+}
+
+function applyWorstCase() {
+    if (!currentWorstCase) return;
+    
+    // Apply all outcomes from worst case scenario
+    userOutcomes = { ...currentWorstCase.outcomes };
+    
+    // Re-render games and recalculate
+    renderKeyGames();
+    calculateAndDisplayScenarios();
+}
+
+function clearAllOutcomes() {
+    userOutcomes = {};
+    renderKeyGames();
+    calculateAndDisplayScenarios();
+}
+
+function toggleSimulationMode(weighted) {
+    useWeightedSimulation = weighted;
+    
+    // Update button states
+    document.getElementById('randomModeBtn').classList.toggle('active', !weighted);
+    document.getElementById('weightedModeBtn').classList.toggle('active', weighted);
+    
+    // Recalculate scenarios with new mode
+    calculateAndDisplayScenarios();
+}
+
+function selectTeam(teamAbbr) {
+    TARGET_TEAM = teamAbbr;
+    userOutcomes = {}; // Reset selected outcomes
+    identifyCriticalGames(); // Recalculate critical games for new team
+    renderApp(); // Re-render with new team
+    calculateAndDisplayScenarios();
+}
+
+function renderBothStandings() {
+    renderStandings('NFC', 'nfcStandingsTable');
+    renderStandings('AFC', 'afcStandingsTable');
+}
+
+function renderStandings(conference, targetElementId) {
+    // Get standings for the specified conference
+    const conferenceStandings = allStandings.filter(team => team.conference === conference);
+    const playoffTeams = calculatePlayoffTeams(conferenceStandings);
     const playoffIds = playoffTeams.map(t => t.id);
+    
+    // Create sorted list: playoff teams by seed, then non-playoff teams by record
+    const playoffTeamsSorted = [...playoffTeams].sort((a, b) => a.seed - b.seed);
+    const nonPlayoffTeams = conferenceStandings.filter(t => !playoffIds.includes(t.id));
+    const sortedTeams = [...playoffTeamsSorted, ...nonPlayoffTeams];
     
     let html = '<table class="standings-table">';
     html += '<thead><tr>';
-    html += '<th>Seed</th><th>Team</th><th>Record</th><th>Division</th>';
+    html += `<th>Seed</th><th>Team</th><th>Record</th><th>Division</th>`;
     html += '</tr></thead><tbody>';
     
-    nfcStandings.forEach((team, index) => {
+    sortedTeams.forEach((team, index) => {
         const isPlayoffTeam = playoffIds.includes(team.id);
         const playoffTeam = playoffTeams.find(t => t.id === team.id);
         const isTarget = team.abbr === TARGET_TEAM;
@@ -793,8 +902,15 @@ function renderStandings() {
         else if (isDivWinner) rowClass = 'division-winner';
         else if (isPlayoffTeam) rowClass = 'playoff-team';
         
-        html += `<tr class="${rowClass}">`;
-        html += `<td>${isPlayoffTeam ? `<span class="playoff-seed">${playoffTeam.seed}</span>` : index + 1}</td>`;
+        html += `<tr class="${rowClass}" onclick="selectTeam('${team.abbr}')" style="cursor: pointer;">`;
+        
+        if (isPlayoffTeam) {
+            const seedClass = playoffTeam.seed <= 4 ? 'division-winner' : 'wildcard';
+            html += `<td><span class="playoff-seed ${seedClass}">${playoffTeam.seed}</span></td>`;
+        } else {
+            html += `<td>${index + 1}</td>`;
+        }
+        
         html += `<td>
             <div class="team-info">
                 <img src="${team.logo}" alt="${team.abbr}" class="team-logo" onerror="this.style.display='none'">
@@ -808,7 +924,7 @@ function renderStandings() {
     
     html += '</tbody></table>';
     
-    document.getElementById('standingsTable').innerHTML = html;
+    document.getElementById(targetElementId).innerHTML = html;
 }
 
 function renderKeyGames() {
@@ -824,16 +940,19 @@ function renderKeyGames() {
         html += `<span class="game-impact ${impactClass}">${game.impact.label}</span>`;
         html += `</div>`;
         
+        const awayTeamData = allStandings.find(t => t.abbr === game.awayTeam.abbr);
+        const homeTeamData = allStandings.find(t => t.abbr === game.homeTeam.abbr);
+        
         html += `<div class="matchup">`;
         html += `<div class="team">
             <img src="${game.awayTeam.logo}" alt="${game.awayTeam.abbr}">
-            <span>${game.awayTeam.name}</span>
+            <span>${game.awayTeam.name}${awayTeamData ? ` (${awayTeamData.division})` : ''}</span>
             <span style="color: #888; font-size: 0.9em;">(${game.awayTeam.record})</span>
         </div>`;
         html += `<span class="vs">@</span>`;
         html += `<div class="team">
             <img src="${game.homeTeam.logo}" alt="${game.homeTeam.abbr}">
-            <span>${game.homeTeam.name}</span>
+            <span>${game.homeTeam.name}${homeTeamData ? ` (${homeTeamData.division})` : ''}</span>
             <span style="color: #888; font-size: 0.9em;">(${game.homeTeam.record})</span>
         </div>`;
         html += `</div>`;
@@ -860,7 +979,7 @@ function renderKeyGames() {
 }
 
 function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCase) {
-    document.getElementById('playoffPercentage').textContent = `${probability.toFixed(1)}%`;
+    document.getElementById('playoffPercentage').textContent = `${Math.round(probability)}%`;
     document.getElementById('playoffStatus').textContent = 
         `Made playoffs in ${made} of ${total} simulated scenarios`;
     
@@ -870,7 +989,7 @@ function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCa
         const bearsPlayoffTeam = bestCase.result.playoffTeams.find(t => t.abbr === TARGET_TEAM);
         
         if (bearsPlayoffTeam.isDivisionWinner) {
-            const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+            const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
             const divisionName = targetTeam ? targetTeam.division : 'division';
             bestCaseEl.textContent = `Win ${divisionName} (#${bestCase.result.bearsSeed} seed)`;
         } else {
@@ -898,7 +1017,7 @@ function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCa
         const bearsPlayoffTeam = worstCase.result.playoffTeams.find(t => t.abbr === TARGET_TEAM);
         
         if (bearsPlayoffTeam.isDivisionWinner) {
-            const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+            const targetTeam = allStandings.find(t => t.abbr === TARGET_TEAM);
             const divisionName = targetTeam ? targetTeam.division : 'division';
             worstCaseEl.textContent = `Win ${divisionName} (#${worstCase.result.bearsSeed} seed)`;
         } else {
@@ -921,47 +1040,9 @@ function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCa
     }
 }
 
-function updateBestCaseDisplay(bestCase) {
-    let html = '';
-    
-    if (bestCase.result.bearsMadePlayoffs) {
-        html += `<p style="color: #4CAF50; font-size: 1.1em; margin-bottom: 15px;">
-            ✅ <strong>Bears make playoffs as ${bestCase.result.bearsSeed} seed</strong>
-        </p>`;
-    } else {
-        html += `<p style="color: #f44336; font-size: 1.1em; margin-bottom: 15px;">
-            ❌ <strong>Bears miss playoffs even in best case</strong>
-        </p>`;
-    }
-    
-    html += '<p style="margin-bottom: 10px; font-size: 0.95em;">Key outcomes needed:</p>';
-    html += '<ul class="scenario-list">';
-    
-    const bearsGames = bestCase.gamesSet.filter(g => 
-        g.homeTeam.abbr === TARGET_TEAM || g.awayTeam.abbr === TARGET_TEAM
-    ).slice(0, 5);
-    
-    bearsGames.forEach(game => {
-        html += `<li>Week ${game.week}: ${game.selectedWinner.name} wins</li>`;
-    });
-    
-    const otherGames = bestCase.gamesSet.filter(g => 
-        g.homeTeam.abbr !== TARGET_TEAM && g.awayTeam.abbr !== TARGET_TEAM
-    ).slice(0, 5);
-    
-    if (otherGames.length > 0) {
-        html += '<li style="border-left-color: #888; margin-top: 10px; opacity: 0.7;">Plus favorable results:</li>';
-        otherGames.forEach(game => {
-            html += `<li class="negative" style="border-left-color: #888; opacity: 0.7;">
-                Week ${game.week}: ${game.selectedWinner.name} wins
-            </li>`;
-        });
-    }
-    
-    html += '</ul>';
-    
-    document.getElementById('bestCase').innerHTML = html;
-}
+// function updateBestCaseDisplay(bestCase) - NO LONGER USED
+// This function was removed because we no longer display the detailed best case breakdown
+// The best/worst case scenarios are now shown in the sticky header and are clickable
 
 // ========================================
 // USER INTERACTION
@@ -983,3 +1064,6 @@ function setOutcome(gameId, outcome) {
 
 // Make function available globally
 window.setOutcome = setOutcome;
+window.selectTeam = selectTeam;
+window.clearAllOutcomes = clearAllOutcomes;
+window.toggleSimulationMode = toggleSimulationMode;
