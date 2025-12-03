@@ -368,11 +368,34 @@ function simulateScenario(outcomes) {
     const bearsMadePlayoffs = playoffTeams.some(t => t.abbr === TARGET_TEAM);
     const bearsSeed = playoffTeams.find(t => t.abbr === TARGET_TEAM)?.seed || null;
     
+    // Calculate Bears' position in division
+    const bearsTeam = standings.find(t => t.abbr === TARGET_TEAM);
+    const divisionTeams = standings.filter(t => t.division === bearsTeam.division)
+        .sort((a, b) => {
+            if (b.wins !== a.wins) return b.wins - a.wins;
+            if (a.losses !== b.losses) return a.losses - b.losses;
+            return 0;
+        });
+    const bearsDivisionRank = divisionTeams.findIndex(t => t.abbr === TARGET_TEAM) + 1;
+    
+    // Calculate Bears' position in wildcard race (among non-division winners)
+    const divisionWinners = playoffTeams.filter(t => t.seed <= 4);
+    const wildCardPool = standings.filter(team => 
+        !divisionWinners.find(dw => dw.id === team.id)
+    ).sort((a, b) => {
+        if (b.wins !== a.wins) return b.wins - a.wins;
+        if (a.losses !== b.losses) return a.losses - b.losses;
+        return 0;
+    });
+    const bearsWildcardRank = wildCardPool.findIndex(t => t.abbr === TARGET_TEAM) + 1;
+    
     return {
         standings,
         playoffTeams,
         bearsMadePlayoffs,
-        bearsSeed
+        bearsSeed,
+        bearsDivisionRank,
+        bearsWildcardRank
     };
 }
 
@@ -410,50 +433,249 @@ function calculateAndDisplayScenarios() {
     
     console.log(`✅ Bears make playoffs in ${bearsPlayoffCount}/${numSamples} scenarios (${playoffProbability.toFixed(1)}%)`);
     
-    // Find best case scenario (Bears win all their games + most favorable outcomes)
+    // Find best and worst case scenarios
     const bestCase = findBestCaseScenario();
+    const worstCase = findWorstCaseScenario();
     
     // Update display
-    updatePlayoffChancesDisplay(playoffProbability, bearsPlayoffCount, numSamples);
+    updatePlayoffChancesDisplay(playoffProbability, bearsPlayoffCount, numSamples, bestCase, worstCase);
     updateBestCaseDisplay(bestCase);
 }
 
 function findBestCaseScenario() {
-    // Try scenarios where Bears win all their games
-    const bearsGames = criticalGames.filter(g => 
+    // Get all undecided games (not locked by user)
+    const undecidedGames = criticalGames.filter(g => !userOutcomes[g.id]);
+    
+    // Use brute force only for very small scenarios
+    const maxBruteForce = 14; // 2^14 = 16,384 combinations (fast)
+    
+    if (undecidedGames.length <= maxBruteForce) {
+        // Brute force all combinations
+        let bestResult = null;
+        let bestOutcomes = null;
+        const numCombinations = Math.pow(2, undecidedGames.length);
+        
+        for (let i = 0; i < numCombinations; i++) {
+            const outcomes = { ...userOutcomes };
+            
+            undecidedGames.forEach((game, index) => {
+                const bit = (i >> index) & 1;
+                outcomes[game.id] = bit === 0 ? 'home' : 'away';
+            });
+            
+            const result = simulateScenario(outcomes);
+            
+            if (!bestResult || 
+                (result.bearsMadePlayoffs && !bestResult.bearsMadePlayoffs) ||
+                (result.bearsMadePlayoffs && bestResult.bearsMadePlayoffs && result.bearsSeed < bestResult.bearsSeed) ||
+                (!result.bearsMadePlayoffs && !bestResult.bearsMadePlayoffs && 
+                 (result.bearsWildcardRank < bestResult.bearsWildcardRank || result.bearsDivisionRank < bestResult.bearsDivisionRank))) {
+                bestResult = result;
+                bestOutcomes = outcomes;
+            }
+        }
+        
+        return {
+            outcomes: bestOutcomes,
+            result: bestResult,
+            gamesSet: criticalGames.filter(g => bestOutcomes[g.id]).map(g => ({
+                ...g,
+                selectedWinner: bestOutcomes[g.id] === 'home' ? g.homeTeam : g.awayTeam
+            }))
+        };
+    }
+    
+    // For larger scenarios, use multiple strategic approaches
+    const bearsGames = undecidedGames.filter(g => 
         g.homeTeam.abbr === TARGET_TEAM || g.awayTeam.abbr === TARGET_TEAM
     );
-    
-    const outcomes = { ...userOutcomes };
-    
-    // Bears win all their games
-    bearsGames.forEach(game => {
-        if (!outcomes[game.id]) {
-            outcomes[game.id] = game.homeTeam.abbr === TARGET_TEAM ? 'home' : 'away';
-        }
-    });
-    
-    // For other games, try to find best scenario
-    // Simple heuristic: NFC North rivals lose
     const nfcNorthRivals = ['DET', 'MIN', 'GB'];
-    criticalGames.forEach(game => {
-        if (outcomes[game.id]) return;
-        
-        if (nfcNorthRivals.includes(game.homeTeam.abbr)) {
-            outcomes[game.id] = 'away';
-        } else if (nfcNorthRivals.includes(game.awayTeam.abbr)) {
-            outcomes[game.id] = 'home';
-        }
-    });
+    const otherGames = undecidedGames.filter(g => 
+        g.homeTeam.abbr !== TARGET_TEAM && g.awayTeam.abbr !== TARGET_TEAM
+    );
     
-    const result = simulateScenario(outcomes);
+    let bestResult = null;
+    let bestOutcomes = null;
+    
+    // Strategy 1: Bears win all, rivals lose all, others random (3000 samples)
+    for (let i = 0; i < 3000; i++) {
+        const outcomes = { ...userOutcomes };
+        
+        bearsGames.forEach(game => {
+            outcomes[game.id] = game.homeTeam.abbr === TARGET_TEAM ? 'home' : 'away';
+        });
+        
+        otherGames.forEach(game => {
+            if (nfcNorthRivals.includes(game.homeTeam.abbr)) {
+                outcomes[game.id] = 'away';
+            } else if (nfcNorthRivals.includes(game.awayTeam.abbr)) {
+                outcomes[game.id] = 'home';
+            } else {
+                outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
+            }
+        });
+        
+        const result = simulateScenario(outcomes);
+        
+        if (!bestResult || 
+            (result.bearsMadePlayoffs && !bestResult.bearsMadePlayoffs) ||
+            (result.bearsMadePlayoffs && bestResult.bearsMadePlayoffs && result.bearsSeed < bestResult.bearsSeed) ||
+            (!result.bearsMadePlayoffs && !bestResult.bearsMadePlayoffs && 
+             (result.bearsWildcardRank < bestResult.bearsWildcardRank || result.bearsDivisionRank < bestResult.bearsDivisionRank))) {
+            bestResult = result;
+            bestOutcomes = outcomes;
+        }
+    }
+    
+    // Strategy 2: All non-Bears games favor higher seeds losing (helps wildcard chances)
+    for (let i = 0; i < 1000; i++) {
+        const outcomes = { ...userOutcomes };
+        
+        bearsGames.forEach(game => {
+            outcomes[game.id] = game.homeTeam.abbr === TARGET_TEAM ? 'home' : 'away';
+        });
+        
+        otherGames.forEach(game => {
+            // Favor upsets - helps Bears wildcard chances
+            outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
+        });
+        
+        const result = simulateScenario(outcomes);
+        
+        if (!bestResult || 
+            (result.bearsMadePlayoffs && !bestResult.bearsMadePlayoffs) ||
+            (result.bearsMadePlayoffs && bestResult.bearsMadePlayoffs && result.bearsSeed < bestResult.bearsSeed) ||
+            (!result.bearsMadePlayoffs && !bestResult.bearsMadePlayoffs && 
+             (result.bearsWildcardRank < bestResult.bearsWildcardRank || result.bearsDivisionRank < bestResult.bearsDivisionRank))) {
+            bestResult = result;
+            bestOutcomes = outcomes;
+        }
+    }
     
     return {
-        outcomes,
-        result,
-        gamesSet: criticalGames.filter(g => outcomes[g.id]).map(g => ({
+        outcomes: bestOutcomes,
+        result: bestResult,
+        gamesSet: criticalGames.filter(g => bestOutcomes[g.id]).map(g => ({
             ...g,
-            selectedWinner: outcomes[g.id] === 'home' ? g.homeTeam : g.awayTeam
+            selectedWinner: bestOutcomes[g.id] === 'home' ? g.homeTeam : g.awayTeam
+        }))
+    };
+}
+
+function findWorstCaseScenario() {
+    // Get all undecided games (not locked by user)
+    const undecidedGames = criticalGames.filter(g => !userOutcomes[g.id]);
+    
+    const maxBruteForce = 14; // 2^14 = 16,384 combinations (fast)
+    
+    if (undecidedGames.length <= maxBruteForce) {
+        // Brute force all combinations
+        let worstResult = null;
+        let worstOutcomes = null;
+        const numCombinations = Math.pow(2, undecidedGames.length);
+        
+        for (let i = 0; i < numCombinations; i++) {
+            const outcomes = { ...userOutcomes };
+            
+            undecidedGames.forEach((game, index) => {
+                const bit = (i >> index) & 1;
+                outcomes[game.id] = bit === 0 ? 'home' : 'away';
+            });
+            
+            const result = simulateScenario(outcomes);
+            
+            if (!worstResult || 
+                (!result.bearsMadePlayoffs && worstResult.bearsMadePlayoffs) ||
+                (result.bearsMadePlayoffs && worstResult.bearsMadePlayoffs && result.bearsSeed > worstResult.bearsSeed) ||
+                (!result.bearsMadePlayoffs && !worstResult.bearsMadePlayoffs && 
+                 (result.bearsWildcardRank > worstResult.bearsWildcardRank || result.bearsDivisionRank > worstResult.bearsDivisionRank))) {
+                worstResult = result;
+                worstOutcomes = outcomes;
+            }
+        }
+        
+        return {
+            outcomes: worstOutcomes,
+            result: worstResult,
+            gamesSet: criticalGames.filter(g => worstOutcomes[g.id]).map(g => ({
+                ...g,
+                selectedWinner: worstOutcomes[g.id] === 'home' ? g.homeTeam : g.awayTeam
+            }))
+        };
+    }
+    
+    // For larger scenarios, use multiple strategic approaches
+    const bearsGames = undecidedGames.filter(g => 
+        g.homeTeam.abbr === TARGET_TEAM || g.awayTeam.abbr === TARGET_TEAM
+    );
+    const nfcNorthRivals = ['DET', 'MIN', 'GB'];
+    const otherGames = undecidedGames.filter(g => 
+        g.homeTeam.abbr !== TARGET_TEAM && g.awayTeam.abbr !== TARGET_TEAM
+    );
+    
+    let worstResult = null;
+    let worstOutcomes = null;
+    
+    // Strategy 1: Bears lose all, rivals win all, others random (3000 samples)
+    for (let i = 0; i < 3000; i++) {
+        const outcomes = { ...userOutcomes };
+        
+        bearsGames.forEach(game => {
+            outcomes[game.id] = game.homeTeam.abbr === TARGET_TEAM ? 'away' : 'home';
+        });
+        
+        otherGames.forEach(game => {
+            if (nfcNorthRivals.includes(game.homeTeam.abbr)) {
+                outcomes[game.id] = 'home';
+            } else if (nfcNorthRivals.includes(game.awayTeam.abbr)) {
+                outcomes[game.id] = 'away';
+            } else {
+                outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
+            }
+        });
+        
+        const result = simulateScenario(outcomes);
+        
+        if (!worstResult || 
+            (!result.bearsMadePlayoffs && worstResult.bearsMadePlayoffs) ||
+            (result.bearsMadePlayoffs && worstResult.bearsMadePlayoffs && result.bearsSeed > worstResult.bearsSeed) ||
+            (!result.bearsMadePlayoffs && !worstResult.bearsMadePlayoffs && 
+             (result.bearsWildcardRank > worstResult.bearsWildcardRank || result.bearsDivisionRank > worstResult.bearsDivisionRank))) {
+            worstResult = result;
+            worstOutcomes = outcomes;
+        }
+    }
+    
+    // Strategy 2: All non-Bears games go chalk (favorites/better records win)
+    for (let i = 0; i < 1000; i++) {
+        const outcomes = { ...userOutcomes };
+        
+        bearsGames.forEach(game => {
+            outcomes[game.id] = game.homeTeam.abbr === TARGET_TEAM ? 'away' : 'home';
+        });
+        
+        otherGames.forEach(game => {
+            outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
+        });
+        
+        const result = simulateScenario(outcomes);
+        
+        if (!worstResult || 
+            (!result.bearsMadePlayoffs && worstResult.bearsMadePlayoffs) ||
+            (result.bearsMadePlayoffs && worstResult.bearsMadePlayoffs && result.bearsSeed > worstResult.bearsSeed) ||
+            (!result.bearsMadePlayoffs && !worstResult.bearsMadePlayoffs && 
+             (result.bearsWildcardRank > worstResult.bearsWildcardRank || result.bearsDivisionRank > worstResult.bearsDivisionRank))) {
+            worstResult = result;
+            worstOutcomes = outcomes;
+        }
+    }
+    
+    return {
+        outcomes: worstOutcomes,
+        result: worstResult,
+        gamesSet: criticalGames.filter(g => worstOutcomes[g.id]).map(g => ({
+            ...g,
+            selectedWinner: worstOutcomes[g.id] === 'home' ? g.homeTeam : g.awayTeam
         }))
     };
 }
@@ -467,9 +689,21 @@ function renderApp() {
     
     document.getElementById('app').innerHTML = `
         <div class="playoff-chances" id="playoffChances">
-            <h2>Bears Playoff Chances</h2>
-            <div class="playoff-percentage" id="playoffPercentage">---%</div>
-            <div class="playoff-status" id="playoffStatus">Calculating scenarios...</div>
+            <div class="playoff-chances-left">
+                <h2>Bears Playoff Chances</h2>
+                <div class="playoff-percentage" id="playoffPercentage">---%</div>
+                <div class="playoff-status" id="playoffStatus">Calculating scenarios...</div>
+            </div>
+            <div class="playoff-chances-right">
+                <div class="scenario-item">
+                    <h3>🎯 Best Case Scenario</h3>
+                    <p id="bestCaseScenario">Loading...</p>
+                </div>
+                <div class="scenario-item">
+                    <h3>⚠️ Worst Case Scenario</h3>
+                    <p id="worstCaseScenario">Loading...</p>
+                </div>
+            </div>
         </div>
         
         <div class="main-grid">
@@ -583,10 +817,62 @@ function renderKeyGames() {
     document.getElementById('keyGames').innerHTML = html;
 }
 
-function updatePlayoffChancesDisplay(probability, made, total) {
+function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCase) {
     document.getElementById('playoffPercentage').textContent = `${probability.toFixed(1)}%`;
     document.getElementById('playoffStatus').textContent = 
         `Made playoffs in ${made} of ${total} simulated scenarios`;
+    
+    // Update best case scenario
+    const bestCaseEl = document.getElementById('bestCaseScenario');
+    if (bestCase.result.bearsMadePlayoffs) {
+        const bearsPlayoffTeam = bestCase.result.playoffTeams.find(t => t.abbr === TARGET_TEAM);
+        
+        if (bearsPlayoffTeam.isDivisionWinner) {
+            bestCaseEl.textContent = `Win NFC North (#${bestCase.result.bearsSeed} seed)`;
+        } else {
+            // They're a wildcard - show which wildcard spot (1st, 2nd, or 3rd)
+            const wildcards = bestCase.result.playoffTeams.filter(t => t.isWildCard);
+            const wildcardPosition = wildcards.findIndex(t => t.abbr === TARGET_TEAM) + 1;
+            const ordinal = (n) => ['1st', '2nd', '3rd'][n - 1] || n + 'th';
+            bestCaseEl.textContent = `${ordinal(wildcardPosition)} wildcard (#${bestCase.result.bearsSeed} seed)`;
+        }
+    } else {
+        // Show why they missed
+        const divRank = bestCase.result.bearsDivisionRank;
+        const wcRank = bestCase.result.bearsWildcardRank;
+        const ordinal = (n) => {
+            const s = ['th', 'st', 'nd', 'rd'];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+        bestCaseEl.textContent = `Miss playoffs (${ordinal(divRank)} in division, ${ordinal(wcRank)} in wildcard - need top 3)`;
+    }
+    
+    // Update worst case scenario
+    const worstCaseEl = document.getElementById('worstCaseScenario');
+    if (worstCase.result.bearsMadePlayoffs) {
+        const bearsPlayoffTeam = worstCase.result.playoffTeams.find(t => t.abbr === TARGET_TEAM);
+        
+        if (bearsPlayoffTeam.isDivisionWinner) {
+            worstCaseEl.textContent = `Win NFC North (#${worstCase.result.bearsSeed} seed)`;
+        } else {
+            // They're a wildcard - show which wildcard spot (1st, 2nd, or 3rd)
+            const wildcards = worstCase.result.playoffTeams.filter(t => t.isWildCard);
+            const wildcardPosition = wildcards.findIndex(t => t.abbr === TARGET_TEAM) + 1;
+            const ordinal = (n) => ['1st', '2nd', '3rd'][n - 1] || n + 'th';
+            worstCaseEl.textContent = `${ordinal(wildcardPosition)} wildcard (#${worstCase.result.bearsSeed} seed)`;
+        }
+    } else {
+        // Show why they missed
+        const divRank = worstCase.result.bearsDivisionRank;
+        const wcRank = worstCase.result.bearsWildcardRank;
+        const ordinal = (n) => {
+            const s = ['th', 'st', 'nd', 'rd'];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+        worstCaseEl.textContent = `Miss playoffs (${ordinal(divRank)} in division, ${ordinal(wcRank)} in wildcard - need top 3)`;
+    }
 }
 
 function updateBestCaseDisplay(bestCase) {

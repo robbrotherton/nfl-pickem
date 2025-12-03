@@ -58,9 +58,42 @@
             background: linear-gradient(135deg, #C83803 0%, #FF6B35 100%);
             border-radius: 12px;
             padding: 30px;
-            text-align: center;
             margin-bottom: 30px;
             box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            align-items: center;
+        }
+
+        @media (max-width: 768px) {
+            .playoff-chances {
+                grid-template-columns: 1fr;
+                text-align: center;
+            }
+        }
+
+        .playoff-chances-left {
+            text-align: center;
+        }
+
+        .playoff-chances-right {
+            text-align: left;
+            padding-left: 30px;
+            border-left: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        @media (max-width: 768px) {
+            .playoff-chances-right {
+                border-left: none;
+                border-top: 2px solid rgba(255, 255, 255, 0.2);
+                padding-left: 0;
+                padding-top: 20px;
+                text-align: center;
+            }
         }
 
         .playoff-chances h2 {
@@ -80,6 +113,21 @@
             font-size: 1.2em;
             margin-top: 10px;
             opacity: 0.95;
+        }
+
+        .scenario-item {
+            margin-bottom: 15px;
+        }
+
+        .scenario-item h3 {
+            font-size: 1.1em;
+            margin-bottom: 8px;
+            opacity: 0.9;
+        }
+
+        .scenario-item p {
+            font-size: 1.2em;
+            font-weight: 600;
         }
 
         /* Grid Layout */
