@@ -2,7 +2,7 @@
 // Standalone test version - uses ESPN API directly
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
-const TARGET_TEAM = 'CHI'; // Chicago Bears
+let TARGET_TEAM = 'CHI'; // Default to Chicago Bears
 const CURRENT_SEASON = 2025; // 2025 season
 const CURRENT_WEEK = 14; // We're in week 14, looking at remaining games
 
@@ -188,7 +188,8 @@ function identifyCriticalGames() {
     console.log('🎯 Identifying critical games...');
     
     const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
-    const nfcNorthTeams = nfcStandings.filter(t => t.division === 'NFC North');
+    const targetDivision = targetTeam?.division || 'NFC North';
+    const divisionTeams = nfcStandings.filter(t => t.division === targetDivision);
     
     criticalGames = allGames.filter(game => {
         const homeIsNFC = nfcStandings.some(t => t.abbr === game.homeTeam.abbr);
@@ -197,21 +198,21 @@ function identifyCriticalGames() {
         // Skip games with no NFC teams
         if (!homeIsNFC && !awayIsNFC) return false;
         
-        const homeInNFCNorth = nfcNorthTeams.some(t => t.abbr === game.homeTeam.abbr);
-        const awayInNFCNorth = nfcNorthTeams.some(t => t.abbr === game.awayTeam.abbr);
+        const homeInDivision = divisionTeams.some(t => t.abbr === game.homeTeam.abbr);
+        const awayInDivision = divisionTeams.some(t => t.abbr === game.awayTeam.abbr);
         
-        // Priority 1: Bears games
+        // Priority 1: Target team games
         if (game.homeTeam.abbr === TARGET_TEAM || game.awayTeam.abbr === TARGET_TEAM) {
             return true;
         }
         
-        // Priority 2: NFC North division games
-        if (homeInNFCNorth && awayInNFCNorth) {
+        // Priority 2: Division games
+        if (homeInDivision && awayInDivision) {
             return true;
         }
         
-        // Priority 3: NFC North teams vs anyone in NFC
-        if ((homeInNFCNorth && awayIsNFC) || (awayInNFCNorth && homeIsNFC)) {
+        // Priority 3: Division teams vs anyone in NFC
+        if ((homeInDivision && awayIsNFC) || (awayInDivision && homeIsNFC)) {
             return true;
         }
         
@@ -249,20 +250,23 @@ function calculateGameImpact(game) {
     let score = 0;
     let label = 'Low';
     
-    // Bears game = highest priority
+    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetDivision = targetTeam?.division || 'NFC North';
+    
+    // Target team game = highest priority
     if (game.homeTeam.abbr === TARGET_TEAM || game.awayTeam.abbr === TARGET_TEAM) {
         score = 100;
         label = 'Critical';
     }
-    // Both teams in NFC North
-    else if (nfcStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === 'NFC North' &&
-             nfcStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === 'NFC North') {
+    // Both teams in target's division
+    else if (nfcStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === targetDivision &&
+             nfcStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === targetDivision) {
         score = 80;
         label = 'High';
     }
-    // One team in NFC North
-    else if (nfcStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === 'NFC North' ||
-             nfcStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === 'NFC North') {
+    // One team in target's division
+    else if (nfcStandings.find(t => t.abbr === game.homeTeam.abbr)?.division === targetDivision ||
+             nfcStandings.find(t => t.abbr === game.awayTeam.abbr)?.division === targetDivision) {
         score = 60;
         label = 'Medium';
     }
@@ -489,7 +493,14 @@ function findBestCaseScenario() {
     const bearsGames = undecidedGames.filter(g => 
         g.homeTeam.abbr === TARGET_TEAM || g.awayTeam.abbr === TARGET_TEAM
     );
-    const nfcNorthRivals = ['DET', 'MIN', 'GB'];
+    
+    // Get division rivals (other teams in same division)
+    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetDivision = targetTeam?.division || 'NFC North';
+    const divisionRivals = nfcStandings
+        .filter(t => t.division === targetDivision && t.abbr !== TARGET_TEAM)
+        .map(t => t.abbr);
+    
     const otherGames = undecidedGames.filter(g => 
         g.homeTeam.abbr !== TARGET_TEAM && g.awayTeam.abbr !== TARGET_TEAM
     );
@@ -497,7 +508,7 @@ function findBestCaseScenario() {
     let bestResult = null;
     let bestOutcomes = null;
     
-    // Strategy 1: Bears win all, rivals lose all, others random (3000 samples)
+    // Strategy 1: Target team wins all, rivals lose all, others random (3000 samples)
     for (let i = 0; i < 3000; i++) {
         const outcomes = { ...userOutcomes };
         
@@ -506,9 +517,9 @@ function findBestCaseScenario() {
         });
         
         otherGames.forEach(game => {
-            if (nfcNorthRivals.includes(game.homeTeam.abbr)) {
+            if (divisionRivals.includes(game.homeTeam.abbr)) {
                 outcomes[game.id] = 'away';
-            } else if (nfcNorthRivals.includes(game.awayTeam.abbr)) {
+            } else if (divisionRivals.includes(game.awayTeam.abbr)) {
                 outcomes[game.id] = 'home';
             } else {
                 outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
@@ -608,7 +619,14 @@ function findWorstCaseScenario() {
     const bearsGames = undecidedGames.filter(g => 
         g.homeTeam.abbr === TARGET_TEAM || g.awayTeam.abbr === TARGET_TEAM
     );
-    const nfcNorthRivals = ['DET', 'MIN', 'GB'];
+    
+    // Get division rivals (other teams in same division)
+    const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const targetDivision = targetTeam?.division || 'NFC North';
+    const divisionRivals = nfcStandings
+        .filter(t => t.division === targetDivision && t.abbr !== TARGET_TEAM)
+        .map(t => t.abbr);
+    
     const otherGames = undecidedGames.filter(g => 
         g.homeTeam.abbr !== TARGET_TEAM && g.awayTeam.abbr !== TARGET_TEAM
     );
@@ -616,7 +634,7 @@ function findWorstCaseScenario() {
     let worstResult = null;
     let worstOutcomes = null;
     
-    // Strategy 1: Bears lose all, rivals win all, others random (3000 samples)
+    // Strategy 1: Target team loses all, rivals win all, others random (3000 samples)
     for (let i = 0; i < 3000; i++) {
         const outcomes = { ...userOutcomes };
         
@@ -625,9 +643,9 @@ function findWorstCaseScenario() {
         });
         
         otherGames.forEach(game => {
-            if (nfcNorthRivals.includes(game.homeTeam.abbr)) {
+            if (divisionRivals.includes(game.homeTeam.abbr)) {
                 outcomes[game.id] = 'home';
-            } else if (nfcNorthRivals.includes(game.awayTeam.abbr)) {
+            } else if (divisionRivals.includes(game.awayTeam.abbr)) {
                 outcomes[game.id] = 'away';
             } else {
                 outcomes[game.id] = Math.random() < 0.5 ? 'home' : 'away';
@@ -686,11 +704,26 @@ function findWorstCaseScenario() {
 
 function renderApp() {
     const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+    const teamName = targetTeam ? targetTeam.name : 'Team';
+    
+    // Update page title
+    document.getElementById('pageTitle').textContent = `🏈 ${teamName} Playoff Calculator`;
     
     document.getElementById('app').innerHTML = `
+        <div class="team-selector-container" style="text-align: center; margin-bottom: 20px;">
+            <label for="teamSelector" style="font-size: 1.2em; margin-right: 10px;">Select Team:</label>
+            <select id="teamSelector" style="font-size: 1.1em; padding: 8px 15px; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; border: 2px solid rgba(255,255,255,0.3); cursor: pointer;">
+                ${nfcStandings.map(team => `
+                    <option value="${team.abbr}" ${team.abbr === TARGET_TEAM ? 'selected' : ''}>
+                        ${team.name} (${team.wins}-${team.losses})
+                    </option>
+                `).join('')}
+            </select>
+        </div>
+        
         <div class="playoff-chances" id="playoffChances">
             <div class="playoff-chances-left">
-                <h2>Bears Playoff Chances</h2>
+                <h2>${teamName} Playoff Chances</h2>
                 <div class="playoff-percentage" id="playoffPercentage">---%</div>
                 <div class="playoff-status" id="playoffStatus">Calculating scenarios...</div>
             </div>
@@ -721,7 +754,7 @@ function renderApp() {
         <div class="card">
             <h2>🏈 Critical Games (${criticalGames.length})</h2>
             <p style="margin-bottom: 15px; color: #aaa; font-size: 0.95em;">
-                Click outcomes to lock them in and see how it affects Bears' playoff chances
+                Click outcomes to lock them in and see how it affects ${teamName} playoff chances
             </p>
             <div id="keyGames"></div>
         </div>
@@ -729,6 +762,15 @@ function renderApp() {
     
     renderStandings();
     renderKeyGames();
+    
+    // Add team selector change handler
+    document.getElementById('teamSelector').addEventListener('change', (e) => {
+        TARGET_TEAM = e.target.value;
+        userOutcomes = {}; // Reset selected outcomes
+        identifyCriticalGames(); // Recalculate critical games for new team
+        renderApp(); // Re-render with new team
+        calculateAndDisplayScenarios();
+    });
 }
 
 function renderStandings() {
@@ -828,7 +870,9 @@ function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCa
         const bearsPlayoffTeam = bestCase.result.playoffTeams.find(t => t.abbr === TARGET_TEAM);
         
         if (bearsPlayoffTeam.isDivisionWinner) {
-            bestCaseEl.textContent = `Win NFC North (#${bestCase.result.bearsSeed} seed)`;
+            const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+            const divisionName = targetTeam ? targetTeam.division : 'division';
+            bestCaseEl.textContent = `Win ${divisionName} (#${bestCase.result.bearsSeed} seed)`;
         } else {
             // They're a wildcard - show which wildcard spot (1st, 2nd, or 3rd)
             const wildcards = bestCase.result.playoffTeams.filter(t => t.isWildCard);
@@ -854,7 +898,9 @@ function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCa
         const bearsPlayoffTeam = worstCase.result.playoffTeams.find(t => t.abbr === TARGET_TEAM);
         
         if (bearsPlayoffTeam.isDivisionWinner) {
-            worstCaseEl.textContent = `Win NFC North (#${worstCase.result.bearsSeed} seed)`;
+            const targetTeam = nfcStandings.find(t => t.abbr === TARGET_TEAM);
+            const divisionName = targetTeam ? targetTeam.division : 'division';
+            worstCaseEl.textContent = `Win ${divisionName} (#${worstCase.result.bearsSeed} seed)`;
         } else {
             // They're a wildcard - show which wildcard spot (1st, 2nd, or 3rd)
             const wildcards = worstCase.result.playoffTeams.filter(t => t.isWildCard);
