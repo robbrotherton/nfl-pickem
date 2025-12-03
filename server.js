@@ -342,6 +342,386 @@ app.get('/api/leaderboard/:season/:week', (req, res) => {
 });
 
 // ========================================
+// PLAYOFF CALCULATOR ENDPOINTS
+// ========================================
+
+// Team division/conference mapping
+// Map full team names to abbreviations
+const TEAM_NAME_TO_ABBR = {
+    'Arizona Cardinals': 'ARI',
+    'Atlanta Falcons': 'ATL',
+    'Baltimore Ravens': 'BAL',
+    'Buffalo Bills': 'BUF',
+    'Carolina Panthers': 'CAR',
+    'Chicago Bears': 'CHI',
+    'Cincinnati Bengals': 'CIN',
+    'Cleveland Browns': 'CLE',
+    'Dallas Cowboys': 'DAL',
+    'Denver Broncos': 'DEN',
+    'Detroit Lions': 'DET',
+    'Green Bay Packers': 'GB',
+    'Houston Texans': 'HOU',
+    'Indianapolis Colts': 'IND',
+    'Jacksonville Jaguars': 'JAX',
+    'Kansas City Chiefs': 'KC',
+    'Las Vegas Raiders': 'LV',
+    'Los Angeles Chargers': 'LAC',
+    'Los Angeles Rams': 'LAR',
+    'Miami Dolphins': 'MIA',
+    'Minnesota Vikings': 'MIN',
+    'New England Patriots': 'NE',
+    'New Orleans Saints': 'NO',
+    'New York Giants': 'NYG',
+    'New York Jets': 'NYJ',
+    'Philadelphia Eagles': 'PHI',
+    'Pittsburgh Steelers': 'PIT',
+    'San Francisco 49ers': 'SF',
+    'Seattle Seahawks': 'SEA',
+    'Tampa Bay Buccaneers': 'TB',
+    'Tennessee Titans': 'TEN',
+    'Washington Commanders': 'WAS'
+};
+
+const TEAM_INFO = {
+    // NFC East
+    'PHI': { conference: 'NFC', division: 'NFC East' },
+    'DAL': { conference: 'NFC', division: 'NFC East' },
+    'NYG': { conference: 'NFC', division: 'NFC East' },
+    'WAS': { conference: 'NFC', division: 'NFC East' },
+    // NFC North
+    'DET': { conference: 'NFC', division: 'NFC North' },
+    'MIN': { conference: 'NFC', division: 'NFC North' },
+    'GB': { conference: 'NFC', division: 'NFC North' },
+    'CHI': { conference: 'NFC', division: 'NFC North' },
+    // NFC South
+    'TB': { conference: 'NFC', division: 'NFC South' },
+    'ATL': { conference: 'NFC', division: 'NFC South' },
+    'NO': { conference: 'NFC', division: 'NFC South' },
+    'CAR': { conference: 'NFC', division: 'NFC South' },
+    // NFC West
+    'SEA': { conference: 'NFC', division: 'NFC West' },
+    'LAR': { conference: 'NFC', division: 'NFC West' },
+    'SF': { conference: 'NFC', division: 'NFC West' },
+    'ARI': { conference: 'NFC', division: 'NFC West' },
+    // AFC East
+    'BUF': { conference: 'AFC', division: 'AFC East' },
+    'MIA': { conference: 'AFC', division: 'AFC East' },
+    'NYJ': { conference: 'AFC', division: 'AFC East' },
+    'NE': { conference: 'AFC', division: 'AFC East' },
+    // AFC North
+    'PIT': { conference: 'AFC', division: 'AFC North' },
+    'BAL': { conference: 'AFC', division: 'AFC North' },
+    'CIN': { conference: 'AFC', division: 'AFC North' },
+    'CLE': { conference: 'AFC', division: 'AFC North' },
+    // AFC South
+    'HOU': { conference: 'AFC', division: 'AFC South' },
+    'IND': { conference: 'AFC', division: 'AFC South' },
+    'JAX': { conference: 'AFC', division: 'AFC South' },
+    'JAC': { conference: 'AFC', division: 'AFC South' }, // Alternate abbreviation
+    'TEN': { conference: 'AFC', division: 'AFC South' },
+    // AFC West
+    'KC': { conference: 'AFC', division: 'AFC West' },
+    'LAC': { conference: 'AFC', division: 'AFC West' },
+    'DEN': { conference: 'AFC', division: 'AFC West' },
+    'LV': { conference: 'AFC', division: 'AFC West' },
+    'OAK': { conference: 'AFC', division: 'AFC West' } // Legacy abbreviation
+};
+
+// Get conference records for all teams
+app.get('/api/conference-records/:season', (req, res) => {
+    try {
+        const { season } = req.params;
+        
+        // Get all completed games for the season
+        const games = db.prepare(`
+            SELECT away_abbr, home_abbr, winner 
+            FROM games 
+            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+        `).all(season);
+        
+        // Initialize records for each team
+        const records = {};
+        Object.keys(TEAM_INFO).forEach(abbr => {
+            records[abbr] = { wins: 0, losses: 0, ties: 0 };
+        });
+        
+        // Count conference games
+        games.forEach(game => {
+            const awayTeam = TEAM_INFO[game.away_abbr];
+            const homeTeam = TEAM_INFO[game.home_abbr];
+            
+            if (!awayTeam || !homeTeam) return;
+            
+            // Only count if both teams are in the same conference
+            if (awayTeam.conference === homeTeam.conference) {
+                const winnerAbbr = TEAM_NAME_TO_ABBR[game.winner];
+                
+                if (winnerAbbr === game.away_abbr) {
+                    records[game.away_abbr].wins++;
+                    records[game.home_abbr].losses++;
+                } else if (winnerAbbr === game.home_abbr) {
+                    records[game.home_abbr].wins++;
+                    records[game.away_abbr].losses++;
+                } else if (!winnerAbbr) {
+                    // Tie (no winner)
+                    records[game.away_abbr].ties++;
+                    records[game.home_abbr].ties++;
+                }
+            }
+        });
+        
+        res.json(records);
+    } catch (error) {
+        console.error('Error calculating conference records:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get division records for all teams
+app.get('/api/division-records/:season', (req, res) => {
+    try {
+        const { season } = req.params;
+        
+        // Get all completed games for the season
+        const games = db.prepare(`
+            SELECT away_abbr, home_abbr, winner 
+            FROM games 
+            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+        `).all(season);
+        
+        // Initialize records for each team
+        const records = {};
+        Object.keys(TEAM_INFO).forEach(abbr => {
+            records[abbr] = { wins: 0, losses: 0, ties: 0 };
+        });
+        
+        // Count division games
+        games.forEach(game => {
+            const awayTeam = TEAM_INFO[game.away_abbr];
+            const homeTeam = TEAM_INFO[game.home_abbr];
+            
+            if (!awayTeam || !homeTeam) return;
+            
+            // Only count if both teams are in the same division
+            if (awayTeam.division === homeTeam.division) {
+                const winnerAbbr = TEAM_NAME_TO_ABBR[game.winner];
+                
+                if (winnerAbbr === game.away_abbr) {
+                    records[game.away_abbr].wins++;
+                    records[game.home_abbr].losses++;
+                } else if (winnerAbbr === game.home_abbr) {
+                    records[game.home_abbr].wins++;
+                    records[game.away_abbr].losses++;
+                } else if (!winnerAbbr) {
+                    // Tie (no winner)
+                    records[game.away_abbr].ties++;
+                    records[game.home_abbr].ties++;
+                }
+            }
+        });
+        
+        res.json(records);
+    } catch (error) {
+        console.error('Error calculating division records:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get common games records for all teams
+// Common games = games against opponents that both teams played
+app.get('/api/common-games/:season', (req, res) => {
+    try {
+        const { season } = req.params;
+        
+        // Get all completed games for the season
+        const games = db.prepare(`
+            SELECT away_abbr, home_abbr, winner 
+            FROM games 
+            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+        `).all(season);
+        
+        // For each pair of teams in the same division, calculate common games record
+        const records = {};
+        
+        // Group teams by division
+        const divisionTeams = {};
+        Object.entries(TEAM_INFO).forEach(([abbr, info]) => {
+            if (!divisionTeams[info.division]) {
+                divisionTeams[info.division] = [];
+            }
+            divisionTeams[info.division].push(abbr);
+        });
+        
+        // For each division, calculate common games for all pairs
+        Object.values(divisionTeams).forEach(teams => {
+            teams.forEach(team1 => {
+                teams.forEach(team2 => {
+                    if (team1 >= team2) return; // Only calculate once per pair
+                    
+                    // Find common opponents
+                    const team1Opponents = new Set();
+                    const team2Opponents = new Set();
+                    
+                    games.forEach(game => {
+                        if (game.away_abbr === team1) team1Opponents.add(game.home_abbr);
+                        if (game.home_abbr === team1) team1Opponents.add(game.away_abbr);
+                        if (game.away_abbr === team2) team2Opponents.add(game.home_abbr);
+                        if (game.home_abbr === team2) team2Opponents.add(game.away_abbr);
+                    });
+                    
+                    const commonOpponents = [...team1Opponents].filter(opp => 
+                        team2Opponents.has(opp) && opp !== team1 && opp !== team2
+                    );
+                    
+                    if (commonOpponents.length === 0) return;
+                    
+                    // Calculate records against common opponents
+                    let team1Wins = 0, team1Losses = 0, team1Ties = 0;
+                    let team2Wins = 0, team2Losses = 0, team2Ties = 0;
+                    
+                    games.forEach(game => {
+                        const winnerAbbr = TEAM_NAME_TO_ABBR[game.winner];
+                        
+                        // Team 1's games vs common opponents
+                        if (commonOpponents.includes(game.away_abbr) && game.home_abbr === team1) {
+                            if (winnerAbbr === team1) team1Wins++;
+                            else if (winnerAbbr === game.away_abbr) team1Losses++;
+                            else team1Ties++;
+                        }
+                        if (commonOpponents.includes(game.home_abbr) && game.away_abbr === team1) {
+                            if (winnerAbbr === team1) team1Wins++;
+                            else if (winnerAbbr === game.home_abbr) team1Losses++;
+                            else team1Ties++;
+                        }
+                        
+                        // Team 2's games vs common opponents
+                        if (commonOpponents.includes(game.away_abbr) && game.home_abbr === team2) {
+                            if (winnerAbbr === team2) team2Wins++;
+                            else if (winnerAbbr === game.away_abbr) team2Losses++;
+                            else team2Ties++;
+                        }
+                        if (commonOpponents.includes(game.home_abbr) && game.away_abbr === team2) {
+                            if (winnerAbbr === team2) team2Wins++;
+                            else if (winnerAbbr === game.home_abbr) team2Losses++;
+                            else team2Ties++;
+                        }
+                    });
+                    
+                    // Store records for both teams in this matchup
+                    const key1 = `${team1}_vs_${team2}`;
+                    const key2 = `${team2}_vs_${team1}`;
+                    
+                    records[key1] = {
+                        team: team1,
+                        opponent: team2,
+                        wins: team1Wins,
+                        losses: team1Losses,
+                        ties: team1Ties,
+                        winPct: team1Wins + team1Losses + team1Ties > 0 
+                            ? (team1Wins + team1Ties * 0.5) / (team1Wins + team1Losses + team1Ties)
+                            : 0
+                    };
+                    
+                    records[key2] = {
+                        team: team2,
+                        opponent: team1,
+                        wins: team2Wins,
+                        losses: team2Losses,
+                        ties: team2Ties,
+                        winPct: team2Wins + team2Losses + team2Ties > 0 
+                            ? (team2Wins + team2Ties * 0.5) / (team2Wins + team2Losses + team2Ties)
+                            : 0
+                    };
+                });
+            });
+        });
+        
+        res.json(records);
+    } catch (error) {
+        console.error('Error calculating common games records:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get head-to-head records for all team matchups
+app.get('/api/head-to-head/:season', (req, res) => {
+    try {
+        const { season } = req.params;
+        
+        // Get all completed games for the season
+        const games = db.prepare(`
+            SELECT away_abbr, home_abbr, winner 
+            FROM games 
+            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+        `).all(season);
+        
+        // Calculate head-to-head for all possible team pairs
+        const records = {};
+        const allTeams = Object.keys(TEAM_INFO);
+        
+        // For each pair of teams, calculate head-to-head
+        allTeams.forEach(team1 => {
+            allTeams.forEach(team2 => {
+                if (team1 >= team2) return; // Only calculate once per pair
+                
+                // Find head-to-head games
+                let team1Wins = 0, team1Losses = 0, team1Ties = 0;
+                
+                games.forEach(game => {
+                    const winnerAbbr = TEAM_NAME_TO_ABBR[game.winner];
+                    
+                    // Check if this is a head-to-head game
+                    if ((game.away_abbr === team1 && game.home_abbr === team2) ||
+                        (game.away_abbr === team2 && game.home_abbr === team1)) {
+                        
+                        if (winnerAbbr === team1) {
+                            team1Wins++;
+                        } else if (winnerAbbr === team2) {
+                            team1Losses++;
+                        } else if (!winnerAbbr) {
+                            team1Ties++;
+                        }
+                    }
+                });
+                
+                // Store records for both teams in this matchup
+                const key1 = `${team1}_vs_${team2}`;
+                const key2 = `${team2}_vs_${team1}`;
+                
+                const totalGames = team1Wins + team1Losses + team1Ties;
+                
+                records[key1] = {
+                    team: team1,
+                    opponent: team2,
+                    wins: team1Wins,
+                    losses: team1Losses,
+                    ties: team1Ties,
+                    winPct: totalGames > 0 
+                        ? (team1Wins + team1Ties * 0.5) / totalGames
+                        : 0
+                };
+                
+                records[key2] = {
+                    team: team2,
+                    opponent: team1,
+                    wins: team1Losses,  // team2's wins are team1's losses
+                    losses: team1Wins,  // team2's losses are team1's wins
+                    ties: team1Ties,
+                    winPct: totalGames > 0 
+                        ? (team1Losses + team1Ties * 0.5) / totalGames
+                        : 0
+                };
+            });
+        });
+        
+        res.json(records);
+    } catch (error) {
+        console.error('Error calculating head-to-head records:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ========================================
 // START SERVER
 // ========================================
 
