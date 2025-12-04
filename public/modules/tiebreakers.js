@@ -1,22 +1,24 @@
 // NFL Tiebreaker Logic Module
 // Handles all tiebreaker calculations and multi-team tie resolution
 
+import { getCurrentSeason } from './state.js';
+
 // ========================================
 // TIEBREAKER DATA STORAGE
 // ========================================
 
-let conferenceRecords = {}; // Team -> {wins, losses, ties, winPct} in conference games
-let divisionRecords = {}; // Team -> {wins, losses, ties, winPct} in division games
-let commonGamesRecords = {}; // "TEAM1_vs_TEAM2" -> {team, opponent, wins, losses, ties, winPct}
-let headToHeadRecords = {}; // "TEAM1_vs_TEAM2" -> {team, opponent, wins, losses, ties, winPct}
+export let conferenceRecords = {}; // Team -> {wins, losses, ties, winPct} in conference games
+export let divisionRecords = {}; // Team -> {wins, losses, ties, winPct} in division games
+export let commonGamesRecords = {}; // "TEAM1_vs_TEAM2" -> {team, opponent, wins, losses, ties, winPct}
+export let headToHeadRecords = {}; // "TEAM1_vs_TEAM2" -> {team, opponent, wins, losses, ties, winPct}
 
 // ========================================
 // DATA FETCHING
 // ========================================
 
-async function fetchTiebreakRecords() {
+export async function fetchTiebreakRecords() {
     try {
-        const season = 2025;
+        const season = getCurrentSeason();
         
         // Fetch all tiebreaker data in parallel
         const [confResponse, divResponse, commonResponse, h2hResponse] = await Promise.all([
@@ -42,7 +44,7 @@ async function fetchTiebreakRecords() {
 // TIEBREAKER REASON GENERATION
 // ========================================
 
-function getTiebreakReason(teamA, teamB, context = 'division') {
+export function getTiebreakReason(teamA, teamB, context = 'division') {
     // Returns the reason why teamA beats teamB (or null if no tiebreaker needed)
     // context: 'division' or 'wildcard'
     
@@ -137,7 +139,7 @@ function getTiebreakReason(teamA, teamB, context = 'division') {
 // MULTI-TEAM TIEBREAKER RESOLUTION
 // ========================================
 
-function breakTieMultiTeam(tiedTeams, context = 'wildcard') {
+export function breakTieMultiTeam(tiedTeams, context = 'wildcard') {
     // Apply NFL tiebreaker rules to a group of teams with identical records
     // Returns teams sorted with the winner first
     
@@ -249,7 +251,7 @@ function breakTieMultiTeam(tiedTeams, context = 'wildcard') {
 // SORTING COMPARISON FUNCTIONS
 // ========================================
 
-function createDivisionTiebreakSort() {
+export function createDivisionTiebreakSort() {
     // Returns a comparison function for sorting division teams with NFL tiebreakers
     return (a, b) => {
         // 1. Win percentage (properly handles ties)
@@ -315,7 +317,7 @@ function createDivisionTiebreakSort() {
     };
 }
 
-function createConferenceTiebreakSort() {
+export function createConferenceTiebreakSort() {
     // Returns a comparison function for conference record tiebreakers (division winner seeding)
     return (a, b) => {
         // 1. Win percentage (properly handles ties)
@@ -343,17 +345,4 @@ function createConferenceTiebreakSort() {
     };
 }
 
-// Export for use in other modules
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = {
-        fetchTiebreakRecords,
-        getTiebreakReason,
-        breakTieMultiTeam,
-        createDivisionTiebreakSort,
-        createConferenceTiebreakSort,
-        conferenceRecords,
-        divisionRecords,
-        commonGamesRecords,
-        headToHeadRecords
-    };
-}
+// All exports are now using ES6 export syntax above
