@@ -187,7 +187,7 @@ export function findBestCaseScenario() {
     const undecidedGames = criticalGames.filter(g => !userOutcomes[g.id]);
     
     // Use brute force only for very small scenarios
-    const maxBruteForce = 14; // 2^14 = 16,384 combinations (fast)
+    const maxBruteForce = 18; // 2^18 = 262,144 combinations (still fast on modern browsers)
     
     if (undecidedGames.length <= maxBruteForce) {
         return findBestCaseBruteForce(undecidedGames);

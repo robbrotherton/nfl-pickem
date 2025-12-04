@@ -54,12 +54,15 @@ export function renderApp(onCalculateScenarios) {
             </div>
         </div>
         
-        <div class="playoff-chances" id="playoffChances">
+        <div class="playoff-chances collapsed">
+            <button class="playoff-chances-toggle" onclick="document.querySelector('.playoff-chances').classList.toggle('collapsed')" title="Show/hide details">
+                <span class="toggle-icon">ⓘ</span>
+            </button>
             <div class="playoff-chances-left">
-                <h2>${teamNameWithDivision} Playoff Chances</h2>
+                <h2 class="team-header">${teamNameWithDivision} Playoff Chances</h2>
                 <div class="playoff-percentage" id="playoffPercentage">---%</div>
-                <div class="playoff-status" id="playoffStatus">Calculating scenarios...</div>
-                <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center; align-items: center;">
+                <div class="playoff-status collapsible-content" id="playoffStatus">Calculating scenarios...</div>
+                <div class="collapsible-content" style="margin-top: 15px; display: flex; gap: 10px; justify-content: center; align-items: center;">
                     <button id="weightedModeBtn" class="sim-mode-btn active" title="Weighted by team records">
                         ⚖️
                     </button>
@@ -68,7 +71,7 @@ export function renderApp(onCalculateScenarios) {
                     </button>
                 </div>
             </div>
-            <div class="playoff-chances-right">
+            <div class="playoff-chances-right collapsible-content">
                 <div class="scenario-item" id="bestCaseScenarioItem" style="cursor: pointer; padding: 12px; border-radius: 8px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
                     <h3>🎯 Best Case Scenario</h3>
                     <p id="bestCaseScenario">Loading...</p>
