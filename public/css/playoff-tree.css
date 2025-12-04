@@ -283,6 +283,10 @@ h1 {
     background: #FFA726;
 }
 
+.playoff-seed.no-seed {
+    background: transparent;
+}
+
 /* Key Games */
 .game-item {
     background: rgba(255, 255, 255, 0.03);

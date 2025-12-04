@@ -260,12 +260,17 @@ function renderStandings(conference, targetElementId) {
         
         html += `<tr class="${rowClass}" data-team="${team.abbr}" style="cursor: pointer;">`;
         
+        // Determine seed class based on position
+        let seedNum, seedClass;
         if (isPlayoffTeam) {
-            const seedClass = playoffTeam.seed <= 4 ? 'division-winner' : 'wildcard';
-            html += `<td><span class="playoff-seed ${seedClass}">${playoffTeam.seed}</span>${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}</td>`;
+            seedNum = playoffTeam.seed;
+            seedClass = playoffTeam.seed <= 4 ? 'division-winner' : 'wildcard';
         } else {
-            html += `<td>${index + 1}${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}</td>`;
+            seedNum = index + 1;
+            seedClass = 'no-seed'; // No background for non-playoff teams
         }
+        
+        html += `<td><span class="playoff-seed ${seedClass}">${seedNum}</span>${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}</td>`;
         
         // Build clincher indicator for team name
         let clinchIndicator = '';
