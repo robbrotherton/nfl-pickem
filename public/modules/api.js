@@ -46,8 +46,20 @@ export async function fetchClincherStatus() {
     for (const { conference, groupId } of [{ conference: 'AFC', groupId: 8 }, { conference: 'NFC', groupId: 7 }]) {
         try {
             const response = await fetch(
-                `${ESPN_CORE_API_BASE}/seasons/${currentSeason}/types/2/groups/${groupId}/standings/0?lang=en&region=us`
+                `${ESPN_CORE_API_BASE}/seasons/${currentSeason}/types/2/groups/${groupId}/standings/0?lang=en&region=us`,
+                { 
+                    mode: 'cors',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                }
             );
+            
+            if (!response.ok) {
+                console.warn(`Failed to fetch ${conference} clincher status: ${response.status}`);
+                continue;
+            }
+            
             const data = await response.json();
             
             if (data.standings) {
@@ -70,11 +82,15 @@ export async function fetchClincherStatus() {
                 }
             }
         } catch (error) {
-            console.error(`Error fetching ${conference} clincher status:`, error);
+            console.warn(`Error fetching ${conference} clincher status (continuing without it):`, error.message);
         }
     }
     
-    console.log(`✓ Loaded clincher status for ${Object.keys(clincherMap).length} teams`);
+    if (Object.keys(clincherMap).length > 0) {
+        console.log(`✓ Loaded clincher status for ${Object.keys(clincherMap).length} teams`);
+    } else {
+        console.warn('⚠️ Could not fetch clincher status from ESPN Core API - continuing without clinch indicators');
+    }
     return clincherMap;
 }
 
