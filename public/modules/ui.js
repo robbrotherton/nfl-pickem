@@ -55,7 +55,7 @@ export function renderApp(onCalculateScenarios) {
         </div>
         
         <div class="playoff-chances collapsed">
-            <button class="playoff-chances-toggle" onclick="document.querySelector('.playoff-chances').classList.toggle('collapsed')" title="Show/hide details">
+            <button class="playoff-chances-toggle" title="Show/hide details">
                 <span class="toggle-icon">ⓘ</span>
             </button>
             <div class="playoff-chances-left">
@@ -72,15 +72,15 @@ export function renderApp(onCalculateScenarios) {
                 </div>
             </div>
             <div class="playoff-chances-right collapsible-content">
-                <div class="scenario-item" id="bestCaseScenarioItem" style="cursor: pointer; padding: 12px; border-radius: 8px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+                <div class="scenario-item clickable-scenario" id="bestCaseScenarioItem">
                     <h3>🎯 Best Case Scenario</h3>
                     <p id="bestCaseScenario">Loading...</p>
-                    <p style="font-size: 0.85em; opacity: 0.7; margin-top: 8px;">Click to apply outcomes</p>
+                    <p class="scenario-hint">Click to apply outcomes</p>
                 </div>
-                <div class="scenario-item" id="worstCaseScenarioItem" style="cursor: pointer; padding: 12px; border-radius: 8px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='transparent'">
+                <div class="scenario-item clickable-scenario" id="worstCaseScenarioItem">
                     <h3>⚠️ Worst Case Scenario</h3>
                     <p id="worstCaseScenario">Loading...</p>
-                    <p style="font-size: 0.85em; opacity: 0.7; margin-top: 8px;">Click to apply outcomes</p>
+                    <p class="scenario-hint">Click to apply outcomes</p>
                 </div>
             </div>
         </div>
@@ -117,6 +117,11 @@ function setupEventHandlers(onCalculateScenarios) {
     // Clear all button
     document.getElementById('clearAllBtn').addEventListener('click', () => {
         clearAllOutcomesHandler(onCalculateScenarios);
+    });
+    
+    // Toggle playoff chances collapse (mobile)
+    document.querySelector('.playoff-chances-toggle').addEventListener('click', () => {
+        document.querySelector('.playoff-chances').classList.toggle('collapsed');
     });
 }
 

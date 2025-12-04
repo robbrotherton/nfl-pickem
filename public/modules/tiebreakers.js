@@ -20,12 +20,12 @@ export async function fetchTiebreakRecords() {
     try {
         const season = getCurrentSeason();
         
-        // Fetch all tiebreaker data in parallel
+        // Fetch all tiebreaker data in parallel (using relative URLs)
         const [confResponse, divResponse, commonResponse, h2hResponse] = await Promise.all([
-            fetch(`http://localhost:3000/api/conference-records/${season}`),
-            fetch(`http://localhost:3000/api/division-records/${season}`),
-            fetch(`http://localhost:3000/api/common-games/${season}`),
-            fetch(`http://localhost:3000/api/head-to-head/${season}`)
+            fetch(`/api/conference-records/${season}`),
+            fetch(`/api/division-records/${season}`),
+            fetch(`/api/common-games/${season}`),
+            fetch(`/api/head-to-head/${season}`)
         ]);
         
         conferenceRecords = await confResponse.json();
