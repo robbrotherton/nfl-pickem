@@ -204,6 +204,57 @@
             align-items: center;
             gap: 10px;
         }
+        
+        .tiebreak-info {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            font-size: 12px;
+            cursor: help;
+            color: #4CAF50;
+            font-weight: bold;
+            position: relative;
+        }
+        
+        .tiebreak-info:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .tiebreak-info:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 100%;
+            margin-bottom: 8px;
+            padding: 8px 12px;
+            background: rgba(0, 0, 0, 0.95);
+            color: #fff;
+            border-radius: 6px;
+            font-size: 0.85em;
+            white-space: nowrap;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            pointer-events: none;
+            font-weight: normal;
+        }
+        
+        .tiebreak-info:hover::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 100%;
+            margin-bottom: 2px;
+            border: 6px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.95);
+            z-index: 1001;
+        }
 
         .team-logo {
             width: 30px;

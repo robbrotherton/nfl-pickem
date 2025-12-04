@@ -91,7 +91,7 @@ async function fetchStandings() {
                             wins,
                             losses,
                             ties,
-                            winPct: wins / (wins + losses + ties)
+                            winPct: (wins + 0.5 * ties) / (wins + losses + ties)
                         });
                     }
                 });
@@ -200,6 +200,204 @@ async function fetchTiebreakRecords() {
 // ========================================
 // HELPER FUNCTIONS
 // ========================================
+
+function getTiebreakReason(teamA, teamB, context = 'division') {
+    // Returns the reason why teamA beats teamB (or null if no tiebreaker needed)
+    // context: 'division' or 'wildcard'
+    
+    // Check if teams are actually tied
+    if (teamA.wins !== teamB.wins || teamA.losses !== teamB.losses) {
+        return null;
+    }
+    
+    if (context === 'division') {
+        // Division tiebreakers
+        // 1. Head-to-head
+        const h2hKey = `${teamA.abbr}_vs_${teamB.abbr}`;
+        if (headToHeadRecords[h2hKey]) {
+            const h2hRec = headToHeadRecords[h2hKey];
+            if (h2hRec.wins + h2hRec.losses + h2hRec.ties > 0) {
+                const oppKey = `${teamB.abbr}_vs_${teamA.abbr}`;
+                const oppRec = headToHeadRecords[oppKey];
+                if (h2hRec.winPct > oppRec.winPct) {
+                    return `Wins tie break over ${teamB.abbr} based on head-to-head (${h2hRec.wins}-${h2hRec.losses})`;
+                }
+            }
+        }
+        
+        // 2. Division record
+        if (divisionRecords[teamA.abbr] && divisionRecords[teamB.abbr]) {
+            const aDiv = divisionRecords[teamA.abbr];
+            const bDiv = divisionRecords[teamB.abbr];
+            if (aDiv.wins > bDiv.wins || (aDiv.wins === bDiv.wins && aDiv.losses < bDiv.losses)) {
+                return `Wins tie break over ${teamB.abbr} based on division record (${aDiv.wins}-${aDiv.losses} vs ${bDiv.wins}-${bDiv.losses})`;
+            }
+        }
+        
+        // 3. Common games
+        const commonKey = `${teamA.abbr}_vs_${teamB.abbr}`;
+        if (commonGamesRecords[commonKey]) {
+            const aCommon = commonGamesRecords[commonKey];
+            const oppKey = `${teamB.abbr}_vs_${teamA.abbr}`;
+            const bCommon = commonGamesRecords[oppKey];
+            if (aCommon.winPct > bCommon.winPct) {
+                return `Wins tie break over ${teamB.abbr} based on common games (${aCommon.wins}-${aCommon.losses} vs ${bCommon.wins}-${bCommon.losses})`;
+            }
+        }
+        
+        // 4. Conference record
+        if (conferenceRecords[teamA.abbr] && conferenceRecords[teamB.abbr]) {
+            const aConf = conferenceRecords[teamA.abbr];
+            const bConf = conferenceRecords[teamB.abbr];
+            if (aConf.wins > bConf.wins || (aConf.wins === bConf.wins && aConf.losses < bConf.losses)) {
+                return `Wins tie break over ${teamB.abbr} based on conference record (${aConf.wins}-${aConf.losses} vs ${bConf.wins}-${bConf.losses})`;
+            }
+        }
+    } else {
+        // Wild card tiebreakers
+        // 1. Head-to-head (if applicable)
+        const h2hKey = `${teamA.abbr}_vs_${teamB.abbr}`;
+        if (headToHeadRecords[h2hKey]) {
+            const h2hRec = headToHeadRecords[h2hKey];
+            if (h2hRec.wins + h2hRec.losses + h2hRec.ties > 0) {
+                const oppKey = `${teamB.abbr}_vs_${teamA.abbr}`;
+                const oppRec = headToHeadRecords[oppKey];
+                if (h2hRec.winPct > oppRec.winPct) {
+                    return `Wins tie break over ${teamB.abbr} based on head-to-head (${h2hRec.wins}-${h2hRec.losses})`;
+                }
+            }
+        }
+        
+        // 2. Conference record
+        if (conferenceRecords[teamA.abbr] && conferenceRecords[teamB.abbr]) {
+            const aConf = conferenceRecords[teamA.abbr];
+            const bConf = conferenceRecords[teamB.abbr];
+            if (aConf.wins > bConf.wins || (aConf.wins === bConf.wins && aConf.losses < bConf.losses)) {
+                return `Wins tie break over ${teamB.abbr} based on conference record (${aConf.wins}-${aConf.losses} vs ${bConf.wins}-${bConf.losses})`;
+            }
+        }
+        
+        // 3. Common games
+        const commonKey = `${teamA.abbr}_vs_${teamB.abbr}`;
+        if (commonGamesRecords[commonKey]) {
+            const aCommon = commonGamesRecords[commonKey];
+            const oppKey = `${teamB.abbr}_vs_${teamA.abbr}`;
+            const bCommon = commonGamesRecords[oppKey];
+            if (aCommon.winPct > bCommon.winPct) {
+                return `Wins tie break over ${teamB.abbr} based on common games (${aCommon.wins}-${aCommon.losses} vs ${bCommon.wins}-${bCommon.losses})`;
+            }
+        }
+    }
+    
+    return null;
+}
+
+// Apply NFL tiebreaker rules to a group of teams with identical records
+// Returns teams sorted with the winner first
+function breakTieMultiTeam(tiedTeams, context = 'wildcard') {
+    if (tiedTeams.length <= 1) return tiedTeams;
+    
+    // Make a copy to avoid mutating the original
+    let remaining = [...tiedTeams];
+    const sorted = [];
+    
+    while (remaining.length > 0) {
+        if (remaining.length === 1) {
+            sorted.push(remaining[0]);
+            break;
+        }
+        
+        // For wild card tiebreakers:
+        // 1. Head-to-head sweep (one team beat all others)
+        // 2. Conference record
+        // 3. Common games
+        // 4. Strength of victory, etc. (not implemented)
+        
+        let winner = null;
+        let tiebreakReason = null;
+        
+        if (context === 'wildcard') {
+            // 1. Check for head-to-head sweep
+            for (const team of remaining) {
+                let beatAllOthers = true;
+                for (const opponent of remaining) {
+                    if (team.abbr === opponent.abbr) continue;
+                    
+                    const h2hKey = `${team.abbr}_vs_${opponent.abbr}`;
+                    const h2hRec = headToHeadRecords[h2hKey];
+                    
+                    if (!h2hRec || h2hRec.wins + h2hRec.losses + h2hRec.ties === 0) {
+                        // Didn't play this opponent
+                        beatAllOthers = false;
+                        break;
+                    }
+                    
+                    if (h2hRec.winPct <= 0.5) {
+                        // Didn't beat this opponent
+                        beatAllOthers = false;
+                        break;
+                    }
+                }
+                
+                if (beatAllOthers) {
+                    winner = team;
+                    const otherTeams = remaining.filter(t => t.abbr !== team.abbr).map(t => t.abbr);
+                    tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on head-to-head sweep`;
+                    break;
+                }
+            }
+            
+            // 2. If no head-to-head sweep, use conference record
+            if (!winner) {
+                let bestConfRecord = null;
+                let bestTeam = null;
+                
+                for (const team of remaining) {
+                    const confRec = conferenceRecords[team.abbr];
+                    if (!confRec) continue;
+                    
+                    if (!bestConfRecord || 
+                        confRec.wins > bestConfRecord.wins ||
+                        (confRec.wins === bestConfRecord.wins && confRec.losses < bestConfRecord.losses)) {
+                        bestConfRecord = confRec;
+                        bestTeam = team;
+                    }
+                }
+                
+                if (bestTeam && bestConfRecord) {
+                    // Check if this team is clearly better (no other team has same conf record)
+                    const teamsWithSameConfRecord = remaining.filter(t => {
+                        const rec = conferenceRecords[t.abbr];
+                        return rec && rec.wins === bestConfRecord.wins && rec.losses === bestConfRecord.losses;
+                    });
+                    
+                    if (teamsWithSameConfRecord.length === 1) {
+                        winner = bestTeam;
+                        const otherTeams = remaining.filter(t => t.abbr !== bestTeam.abbr).map(t => t.abbr);
+                        tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on conference record (${bestConfRecord.wins}-${bestConfRecord.losses})`;
+                    }
+                }
+            }
+            
+            // 3. Common games (if no clear winner yet)
+            // This is complex - skipping for now as conference record should handle most cases
+        }
+        
+        // If we found a winner, add them and remove from remaining
+        if (winner) {
+            winner.tiebreakReason = tiebreakReason;
+            sorted.push(winner);
+            remaining = remaining.filter(t => t.abbr !== winner.abbr);
+        } else {
+            // No clear tiebreaker - just take the first one and continue
+            // This shouldn't happen with proper tiebreaker implementation
+            sorted.push(remaining[0]);
+            remaining = remaining.slice(1);
+        }
+    }
+    
+    return sorted;
+}
 
 function getConferenceStandings(conference) {
     return allStandings.filter(t => t.conference === conference);
@@ -327,12 +525,14 @@ function calculatePlayoffTeams(standings) {
     const divisionWinners = [];
     Object.keys(divisions).forEach(div => {
         const sorted = divisions[div].sort((a, b) => {
-            // 1. Overall wins
-            if (b.wins !== a.wins) return b.wins - a.wins;
-            // 2. Overall losses
-            if (a.losses !== b.losses) return a.losses - b.losses;
+            // 1. Win percentage (properly handles ties)
+            const aWinPct = a.winPct || 0;
+            const bWinPct = b.winPct || 0;
+            if (Math.abs(bWinPct - aWinPct) > 0.0001) {
+                return bWinPct - aWinPct;
+            }
             
-            // Teams are tied - apply NFL division tiebreakers
+            // Teams have same win percentage - apply NFL division tiebreakers
             // 1. Head-to-head record
             const h2hKey1 = `${a.abbr}_vs_${b.abbr}`;
             const h2hKey2 = `${b.abbr}_vs_${a.abbr}`;
@@ -386,19 +586,62 @@ function calculatePlayoffTeams(standings) {
             // 5. Win percentage (handles ties correctly)
             return (b.winPct || 0) - (a.winPct || 0);
         });
+        
+        // Add tiebreaker reasons for division teams
+        for (let i = 0; i < sorted.length; i++) {
+            const teamA = sorted[i];
+            
+            // Find all teams in this division with the same W-L record
+            const tiedTeams = sorted.filter(t => 
+                t.wins === teamA.wins && t.losses === teamA.losses
+            );
+            
+            if (tiedTeams.length > 1 && !teamA.tiebreakReason) {
+                // Find the teams this team beat in the tiebreaker
+                const teamsBeaten = [];
+                for (let j = i + 1; j < sorted.length; j++) {
+                    const teamB = sorted[j];
+                    if (teamB.wins === teamA.wins && teamB.losses === teamA.losses) {
+                        teamsBeaten.push(teamB.abbr);
+                    }
+                }
+                
+                if (teamsBeaten.length > 0) {
+                    const reason = getTiebreakReason(teamA, sorted.find(t => t.abbr === teamsBeaten[0]), 'division');
+                    if (reason) {
+                        if (teamsBeaten.length > 1) {
+                            teamA.tiebreakReason = reason.replace(
+                                `over ${teamsBeaten[0]}`,
+                                `over ${teamsBeaten.join(' and ')}`
+                            );
+                        } else {
+                            teamA.tiebreakReason = reason;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Add the division winner (preserving tiebreaker reason)
         if (sorted[0]) {
-            divisionWinners.push({ ...sorted[0], isDivisionWinner: true });
+            divisionWinners.push({ 
+                ...sorted[0], 
+                isDivisionWinner: true,
+                tiebreakReason: sorted[0].tiebreakReason // Preserve the tiebreaker reason
+            });
         }
     });
     
     // Sort division winners by record
     divisionWinners.sort((a, b) => {
-        // 1. Overall wins
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        // 2. Overall losses
-        if (a.losses !== b.losses) return a.losses - b.losses;
+        // 1. Win percentage (properly handles ties)
+        const aWinPct = a.winPct || 0;
+        const bWinPct = b.winPct || 0;
+        if (Math.abs(bWinPct - aWinPct) > 0.0001) {
+            return bWinPct - aWinPct;
+        }
         
-        // Teams are tied - log the tiebreaker
+        // Teams have same win percentage - apply tiebreakers
         // 3. Conference record (if available)
         if (conferenceRecords[a.abbr] && conferenceRecords[b.abbr]) {
             const aConfWins = conferenceRecords[a.abbr].wins;
@@ -415,58 +658,90 @@ function calculatePlayoffTeams(standings) {
         return (b.winPct || 0) - (a.winPct || 0);
     });
     
+    // Add tiebreaker reasons for division winners seeding (seeds 1-4)
+    for (let i = 0; i < divisionWinners.length; i++) {
+        const teamA = divisionWinners[i];
+        
+        // Find all division winners with the same W-L record as teamA
+        const tiedTeams = divisionWinners.filter(t => 
+            t.wins === teamA.wins && t.losses === teamA.losses
+        );
+        
+        // If there are multiple teams tied, add tiebreaker reason for teams that won the tiebreaker
+        if (tiedTeams.length > 1 && !teamA.tiebreakReason) {
+            // Find the teams this team beat in the tiebreaker (those that come after it)
+            const teamsBeaten = [];
+            for (let j = i + 1; j < divisionWinners.length; j++) {
+                const teamB = divisionWinners[j];
+                if (teamB.wins === teamA.wins && teamB.losses === teamA.losses) {
+                    teamsBeaten.push(teamB.abbr);
+                }
+            }
+            
+            if (teamsBeaten.length > 0 && conferenceRecords[teamA.abbr]) {
+                const aConf = conferenceRecords[teamA.abbr];
+                const firstBeatenTeam = divisionWinners.find(t => t.abbr === teamsBeaten[0]);
+                const bConf = conferenceRecords[firstBeatenTeam.abbr];
+                
+                if (aConf.wins > bConf.wins || (aConf.wins === bConf.wins && aConf.losses < bConf.losses)) {
+                    if (teamsBeaten.length > 1) {
+                        teamA.tiebreakReason = `Wins seeding tie break over ${teamsBeaten.join(' and ')} based on conference record (${aConf.wins}-${aConf.losses})`;
+                    } else {
+                        teamA.tiebreakReason = `Wins seeding tie break over ${teamsBeaten[0]} based on conference record (${aConf.wins}-${aConf.losses} vs ${bConf.wins}-${bConf.losses})`;
+                    }
+                }
+            }
+        }
+    }
+    
     // Get wild card teams (best remaining teams)
     const wildCardPool = standings.filter(team => 
         !divisionWinners.find(dw => dw.id === team.id)
     );
     
+    // Sort wild card pool properly handling multi-team ties
+    // First, do a basic sort by win percentage
     wildCardPool.sort((a, b) => {
-        // 1. Overall wins
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        // 2. Overall losses
-        if (a.losses !== b.losses) return a.losses - b.losses;
-        
-        // Wild card tiebreakers
-        // 1. Head-to-head (if applicable)
-        const h2hKey1 = `${a.abbr}_vs_${b.abbr}`;
-        const h2hKey2 = `${b.abbr}_vs_${a.abbr}`;
-        if (headToHeadRecords[h2hKey1] && headToHeadRecords[h2hKey2]) {
-            const aH2HPct = headToHeadRecords[h2hKey1].winPct;
-            const bH2HPct = headToHeadRecords[h2hKey2].winPct;
-            
-            // Only apply if teams actually played each other
-            const totalGames = headToHeadRecords[h2hKey1].wins + headToHeadRecords[h2hKey1].losses + headToHeadRecords[h2hKey1].ties;
-            if (totalGames > 0 && Math.abs(bH2HPct - aH2HPct) > 0.001) {
-                return bH2HPct - aH2HPct;
-            }
+        const aWinPct = a.winPct || 0;
+        const bWinPct = b.winPct || 0;
+        if (Math.abs(bWinPct - aWinPct) > 0.0001) {
+            return bWinPct - aWinPct;
         }
-        
-        // 2. Conference record (if available)
-        if (conferenceRecords[a.abbr] && conferenceRecords[b.abbr]) {
-            const aConfWins = conferenceRecords[a.abbr].wins;
-            const bConfWins = conferenceRecords[b.abbr].wins;
-            if (bConfWins !== aConfWins) return bConfWins - aConfWins;
-            
-            const aConfLosses = conferenceRecords[a.abbr].losses;
-            const bConfLosses = conferenceRecords[b.abbr].losses;
-            if (aConfLosses !== bConfLosses) return aConfLosses - bConfLosses;
-        }
-        
-        // 3. Common games (minimum 4 - note: we calculate all common games, not just 4+)
-        const commonKey1 = `${a.abbr}_vs_${b.abbr}`;
-        const commonKey2 = `${b.abbr}_vs_${a.abbr}`;
-        if (commonGamesRecords[commonKey1] && commonGamesRecords[commonKey2]) {
-            const aCommonPct = commonGamesRecords[commonKey1].winPct;
-            const bCommonPct = commonGamesRecords[commonKey2].winPct;
-            
-            if (Math.abs(bCommonPct - aCommonPct) > 0.001) {
-                return bCommonPct - aCommonPct;
-            }
-        }
-        
-        // 4. Win percentage
-        return (b.winPct || 0) - (a.winPct || 0);
+        return 0; // Keep relative order for ties
     });
+    
+    // Now apply proper multi-team tiebreakers to groups with identical win percentage
+    const sortedWildCardPool = [];
+    let i = 0;
+    while (i < wildCardPool.length) {
+        const currentTeam = wildCardPool[i];
+        const currentWinPct = currentTeam.winPct || 0;
+        
+        // Find all teams with the same win percentage
+        const tiedGroup = [];
+        for (let j = i; j < wildCardPool.length; j++) {
+            const teamWinPct = wildCardPool[j].winPct || 0;
+            if (Math.abs(teamWinPct - currentWinPct) < 0.0001) {
+                tiedGroup.push(wildCardPool[j]);
+            } else {
+                break;
+            }
+        }
+        
+        if (tiedGroup.length > 1) {
+            // Apply multi-team tiebreaker
+            const brokenTie = breakTieMultiTeam(tiedGroup, 'wildcard');
+            sortedWildCardPool.push(...brokenTie);
+        } else {
+            sortedWildCardPool.push(tiedGroup[0]);
+        }
+        
+        i += tiedGroup.length;
+    }
+    
+    // Replace wildCardPool with properly sorted version
+    wildCardPool.length = 0;
+    wildCardPool.push(...sortedWildCardPool);
     
     const wildCards = wildCardPool.slice(0, 3).map(team => ({ ...team, isWildCard: true }));
     
@@ -499,11 +774,11 @@ function simulateScenario(outcomes) {
             
             if (winnerTeam) {
                 winnerTeam.wins++;
-                winnerTeam.winPct = winnerTeam.wins / (winnerTeam.wins + winnerTeam.losses);
+                winnerTeam.winPct = (winnerTeam.wins + 0.5 * winnerTeam.ties) / (winnerTeam.wins + winnerTeam.losses + winnerTeam.ties);
             }
             if (loserTeam) {
                 loserTeam.losses++;
-                loserTeam.winPct = loserTeam.wins / (loserTeam.wins + loserTeam.losses);
+                loserTeam.winPct = (loserTeam.wins + 0.5 * loserTeam.ties) / (loserTeam.wins + loserTeam.losses + loserTeam.ties);
             }
         }
     });
@@ -1008,12 +1283,14 @@ function renderStandings(conference, targetElementId) {
     
     // Sort non-playoff teams with tiebreakers
     nonPlayoffTeams.sort((a, b) => {
-        // 1. Overall wins
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        // 2. Overall losses
-        if (a.losses !== b.losses) return a.losses - b.losses;
+        // 1. Win percentage (properly handles ties)
+        const aWinPct = a.winPct || 0;
+        const bWinPct = b.winPct || 0;
+        if (Math.abs(bWinPct - aWinPct) > 0.0001) {
+            return bWinPct - aWinPct;
+        }
         
-        // Conference tiebreakers (same as wild card)
+        // Teams have same win percentage - apply conference tiebreakers (same as wild card)
         // 1. Head-to-head (if applicable)
         const h2hKey1 = `${a.abbr}_vs_${b.abbr}`;
         const h2hKey2 = `${b.abbr}_vs_${a.abbr}`;
@@ -1055,6 +1332,41 @@ function renderStandings(conference, targetElementId) {
         return (b.winPct || 0) - (a.winPct || 0);
     });
     
+    // Add tiebreaker reasons for non-playoff teams
+    for (let i = 0; i < nonPlayoffTeams.length; i++) {
+        const teamA = nonPlayoffTeams[i];
+        
+        // Find all non-playoff teams with the same W-L record
+        const tiedTeams = nonPlayoffTeams.filter(t => 
+            t.wins === teamA.wins && t.losses === teamA.losses
+        );
+        
+        if (tiedTeams.length > 1 && !teamA.tiebreakReason) {
+            // Find the teams this team beat in the tiebreaker
+            const teamsBeaten = [];
+            for (let j = i + 1; j < nonPlayoffTeams.length; j++) {
+                const teamB = nonPlayoffTeams[j];
+                if (teamB.wins === teamA.wins && teamB.losses === teamA.losses) {
+                    teamsBeaten.push(teamB.abbr);
+                }
+            }
+            
+            if (teamsBeaten.length > 0) {
+                const reason = getTiebreakReason(teamA, nonPlayoffTeams.find(t => t.abbr === teamsBeaten[0]), 'wildcard');
+                if (reason) {
+                    if (teamsBeaten.length > 1) {
+                        teamA.tiebreakReason = reason.replace(
+                            `over ${teamsBeaten[0]}`,
+                            `over ${teamsBeaten.join(' and ')}`
+                        );
+                    } else {
+                        teamA.tiebreakReason = reason;
+                    }
+                }
+            }
+        }
+    }
+    
     const sortedTeams = [...playoffTeamsSorted, ...nonPlayoffTeams];
     
     let html = '<table class="standings-table">';
@@ -1086,6 +1398,7 @@ function renderStandings(conference, targetElementId) {
             <div class="team-info">
                 <img src="${team.logo}" alt="${team.abbr}" class="team-logo" onerror="this.style.display='none'">
                 <span>${team.name}</span>
+                ${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}
             </div>
         </td>`;
         html += `<td>${team.wins}-${team.losses}${team.ties > 0 ? '-' + team.ties : ''}</td>`;
