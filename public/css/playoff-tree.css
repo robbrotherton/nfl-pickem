@@ -192,6 +192,14 @@ h1 {
     font-weight: bold;
 }
 
+.standings-table tr.eliminated {
+    opacity: 0.5;
+}
+
+.standings-table tr.clinched {
+    border-left: 3px solid #4CAF50;
+}
+
 .team-info {
     display: flex;
     align-items: center;

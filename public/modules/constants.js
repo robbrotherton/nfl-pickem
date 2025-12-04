@@ -6,6 +6,7 @@
 // ========================================
 
 export const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
+export const ESPN_CORE_API_BASE = 'https://sports.core.api.espn.com/v2/sports/football/leagues/nfl';
 export const SERVER_API_BASE = '/api'; // Local server endpoints
 
 // ========================================

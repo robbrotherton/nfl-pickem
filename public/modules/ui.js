@@ -244,25 +244,44 @@ function renderStandings(conference, targetElementId) {
         const isTarget = team.abbr === targetAbbr;
         const isDivWinner = playoffTeam?.isDivisionWinner;
         
+        // Use ESPN's clincher status: 'z' = div, 'y' = playoff, 'e' = eliminated, '' = competing
+        const isEliminated = team.clincher === 'e';
+        const isClinched = team.clincher === 'y' || team.clincher === 'z';
+        const isDivClinched = team.clincher === 'z';
+        
         let rowClass = '';
         if (isTarget) rowClass = 'highlight';
         else if (isDivWinner) rowClass = 'division-winner';
         else if (isPlayoffTeam) rowClass = 'playoff-team';
         
+        // Add status indicator classes
+        if (isEliminated) rowClass += ' eliminated';
+        if (isClinched) rowClass += ' clinched';
+        
         html += `<tr class="${rowClass}" data-team="${team.abbr}" style="cursor: pointer;">`;
         
         if (isPlayoffTeam) {
             const seedClass = playoffTeam.seed <= 4 ? 'division-winner' : 'wildcard';
-            html += `<td><span class="playoff-seed ${seedClass}">${playoffTeam.seed}</span></td>`;
+            html += `<td><span class="playoff-seed ${seedClass}">${playoffTeam.seed}</span>${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}</td>`;
         } else {
-            html += `<td>${index + 1}</td>`;
+            html += `<td>${index + 1}${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}</td>`;
+        }
+        
+        // Build clincher indicator for team name
+        let clinchIndicator = '';
+        if (isDivClinched) {
+            clinchIndicator = '<span style="margin-left: 8px;" title="Clinched division">🏆</span>';
+        } else if (isClinched) {
+            clinchIndicator = '<span style="margin-left: 8px;" title="Clinched playoff spot">✅</span>';
+        } else if (isEliminated) {
+            clinchIndicator = '<span style="margin-left: 8px; opacity: 0.6;" title="Eliminated from playoff contention">❌</span>';
         }
         
         html += `<td>
             <div class="team-info">
                 <img src="${team.logo}" alt="${team.abbr}" class="team-logo" onerror="this.style.display='none'">
                 <span>${team.name}</span>
-                ${team.tiebreakReason ? `<span class="tiebreak-info" data-tooltip="${team.tiebreakReason}">ⓘ</span>` : ''}
+                ${clinchIndicator}
             </div>
         </td>`;
         html += `<td>${team.wins}-${team.losses}${team.ties > 0 ? '-' + team.ties : ''}</td>`;

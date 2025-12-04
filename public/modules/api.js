@@ -1,7 +1,7 @@
 // api.js
 // All API calls to ESPN and local server
 
-import { ESPN_API_BASE, DIVISION_MAP, REGULAR_SEASON_WEEKS, FALLBACK_SEASON, FALLBACK_WEEK } from './constants.js';
+import { ESPN_API_BASE, ESPN_CORE_API_BASE, DIVISION_MAP, REGULAR_SEASON_WEEKS, FALLBACK_SEASON, FALLBACK_WEEK } from './constants.js';
 import { getCurrentSeason, getCurrentWeek, setCurrentSeason, setCurrentWeek } from './state.js';
 
 // ========================================
@@ -35,7 +35,51 @@ export async function fetchCurrentSeasonInfo() {
 }
 
 /**
- * Fetch all team standings from ESPN
+ * Fetch clinching status from ESPN Core API
+ * Returns a map of team abbreviation -> clincher status
+ */
+export async function fetchClincherStatus() {
+    const currentSeason = getCurrentSeason();
+    const clincherMap = {};
+    
+    // Fetch both AFC (group 8) and NFC (group 7) standings for clincher status only
+    for (const { conference, groupId } of [{ conference: 'AFC', groupId: 8 }, { conference: 'NFC', groupId: 7 }]) {
+        try {
+            const response = await fetch(
+                `${ESPN_CORE_API_BASE}/seasons/${currentSeason}/types/2/groups/${groupId}/standings/0?lang=en&region=us`
+            );
+            const data = await response.json();
+            
+            if (data.standings) {
+                for (const teamData of data.standings) {
+                    // Get team abbreviation from the team ref URL
+                    const teamRef = teamData.team?.$ref;
+                    if (!teamRef) continue;
+                    
+                    // Extract team ID from ref and fetch just to get abbreviation
+                    const teamId = teamRef.split('/').pop().split('?')[0];
+                    const teamResponse = await fetch(teamRef);
+                    const team = await teamResponse.json();
+                    
+                    // Get clincher status
+                    const record = teamData.records?.[0];
+                    const stats = record?.stats || [];
+                    const clincher = stats.find(s => s.name === 'clincher')?.displayValue || '';
+                    
+                    clincherMap[team.abbreviation] = clincher; // 'z' = div, 'y' = playoff, 'e' = eliminated, '' = competing
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching ${conference} clincher status:`, error);
+        }
+    }
+    
+    console.log(`✓ Loaded clincher status for ${Object.keys(clincherMap).length} teams`);
+    return clincherMap;
+}
+
+/**
+ * Fetch all team standings from ESPN scoreboard
  * Builds standings from completed games in weeks 1 through current week
  */
 export async function fetchStandings() {
@@ -79,12 +123,16 @@ export async function fetchStandings() {
         }
     }
     
-    // Add division and conference info to each team
+    // Fetch clincher status and add to teams
+    const clincherMap = await fetchClincherStatus();
+    
+    // Add division, conference, and clincher info to each team
     const standings = Array.from(teamMap.values())
         .map(team => ({
             ...team,
             division: DIVISION_MAP[team.abbr] || 'Unknown',
-            conference: DIVISION_MAP[team.abbr]?.startsWith('NFC') ? 'NFC' : 'AFC'
+            conference: DIVISION_MAP[team.abbr]?.startsWith('NFC') ? 'NFC' : 'AFC',
+            clincher: clincherMap[team.abbr] || '' // Add ESPN's clincher status
         }));
     
     // Sort by win percentage (descending)
@@ -92,6 +140,8 @@ export async function fetchStandings() {
         if (b.winPct !== a.winPct) return b.winPct - a.winPct;
         return 0;
     });
+    
+    console.log(`✓ Loaded ${standings.length} teams with records and clincher status`);
     
     return standings;
 }
