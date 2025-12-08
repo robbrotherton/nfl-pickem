@@ -425,6 +425,12 @@ async function removePlayerFromWeek(playerName) {
     });
     
     await loadSchedule();
+    
+    // Refresh the modal if it's open
+    const modal = document.getElementById('playerModal');
+    if (modal && modal.classList.contains('show')) {
+        await showPlayerModal();
+    }
 }
 
 async function loadPastPlayers() {
@@ -433,8 +439,8 @@ async function loadPastPlayers() {
     return players;
 }
 
-// Modal functions for adding players
-async function showAddPlayerMenu() {
+// Modal functions for managing players
+async function showPlayerModal() {
     const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
     
@@ -446,27 +452,43 @@ async function showAddPlayerMenu() {
     const currentPlayers = await currentResponse.json();
     const currentPlayerNames = currentPlayers.map(p => p.player_name);
     
+    // Populate active players list
+    const activePlayersList = document.getElementById('activePlayersList');
+    if (currentPlayers.length === 0) {
+        activePlayersList.innerHTML = '<p style="color: #999; font-style: italic;">No players added yet</p>';
+    } else {
+        activePlayersList.innerHTML = currentPlayers.map(player => `
+            <div class="player-chip">
+                ${player.player_name}
+                <button onclick="removePlayerFromWeek('${player.player_name.replace(/'/g, "\\'")}')">✕</button>
+            </div>
+        `).join('');
+    }
+    
     // Get all past players
     const allPlayers = await loadPastPlayers();
     const availablePlayers = allPlayers.filter(p => !currentPlayerNames.includes(p.name));
     
-    // Populate player list
+    // Populate available players list
     const playerList = document.getElementById('playerList');
     if (availablePlayers.length === 0) {
         playerList.innerHTML = '<div style="color: #999; font-style: italic;">No existing players available</div>';
     } else {
-        playerList.innerHTML = availablePlayers.map(player => 
-            `<div class="player-option" onclick="addExistingPlayer('${player.name}')">${player.name}</div>`
-        ).join('');
+        playerList.innerHTML = availablePlayers.map(player => `
+            <div class="player-chip add-player-chip" onclick="addExistingPlayer('${player.name}')" title="Click to add">
+                <span>+</span>
+                ${player.name}
+            </div>
+        `).join('');
     }
     
     // Show modal
-    document.getElementById('addPlayerModal').classList.add('show');
+    document.getElementById('playerModal').classList.add('show');
 }
 
-function closeAddPlayerMenu(event) {
+function closePlayerModal(event) {
     if (event && event.target.className !== 'modal') return;
-    document.getElementById('addPlayerModal').classList.remove('show');
+    document.getElementById('playerModal').classList.remove('show');
     document.getElementById('newPlayerInput').style.display = 'none';
     document.getElementById('newPlayerName').value = '';
 }
@@ -483,7 +505,7 @@ function cancelNewPlayer() {
 
 async function addExistingPlayer(playerName) {
     await addPlayerByName(playerName);
-    closeAddPlayerMenu();
+    await showPlayerModal(); // Refresh the modal to show updated lists
 }
 
 async function addNewPlayer() {
@@ -494,7 +516,9 @@ async function addNewPlayer() {
     }
     
     await addPlayerByName(playerName);
-    closeAddPlayerMenu();
+    document.getElementById('newPlayerInput').style.display = 'none';
+    document.getElementById('newPlayerName').value = '';
+    await showPlayerModal(); // Refresh the modal to show updated lists
 }
 
 async function addPlayerByName(playerName) {
@@ -534,30 +558,9 @@ async function addPlayerByName(playerName) {
 }
 
 function renderActivePlayersUI(weekPlayers) {
-    const container = document.getElementById('activePlayers');
-    container.innerHTML = '';
-    
-    if (weekPlayers.length === 0) {
-        container.innerHTML = '<p class="no-players">No players yet. Click + to add!</p>';
-    } else {
-        weekPlayers.forEach(player => {
-            const chip = document.createElement('div');
-            chip.className = 'player-chip';
-            chip.innerHTML = `
-                ${player.player_name}
-                <button onclick="removePlayerFromWeek('${player.player_name.replace(/'/g, "\\'")}')">✕</button>
-            `;
-            container.appendChild(chip);
-        });
-    }
-    
-    // Add the + button as a div to match player chips
-    const addBtn = document.createElement('div');
-    addBtn.className = 'add-player-btn';
-    addBtn.title = 'Add Player';
-    addBtn.textContent = '+';
-    addBtn.onclick = showAddPlayerMenu;
-    container.appendChild(addBtn);
+    // This function is called after loading schedule
+    // Store the week players for the modal
+    window.currentWeekPlayers = weekPlayers;
 }
 
 // ========================================
@@ -720,6 +723,13 @@ async function loadSchedule() {
         // Render schedule
         await renderScheduleTable(games, weekPlayers, season, week);
         
+        // Update view button states
+        document.getElementById('picksViewBtn').classList.add('active');
+        document.getElementById('leaderboardViewBtn').classList.remove('active');
+        
+        // Show week navigation row when showing picks
+        document.querySelector('.week-title-row').style.display = 'flex';
+        
     } catch (error) {
         content.innerHTML = `<div class="error">Error loading schedule: ${error.message}<br>Check console (F12) for details.</div>`;
         console.error('Error:', error);
@@ -730,8 +740,12 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
     const allPicks = await loadPicksForWeek(week, season);
     const playerNames = weekPlayers.map(p => p.player_name);
     
+    // Check if any games are not final
+    const hasInProgressGames = games.some(g => g.status !== 'final');
+    const headerText = hasInProgressGames ? 'Game (click to refresh)' : 'Game';
+    
     let html = '<table><thead><tr>';
-    html += '<th class="team-column">Game</th>';
+    html += `<th class="team-column clickable-header" onclick="forceRefreshSchedule()" title="Refresh scores from ESPN">${headerText}</th>`;
     
     playerNames.forEach(name => {
         html += `<th class="pick-column"><div class="member-name">${name}</div></th>`;
@@ -857,7 +871,84 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
     
     html += '</tbody></table>';
     
+    // Add weekly leaderboard below the picks
+    const weeklyLeaderboardHtml = await renderWeeklyLeaderboard(season, week);
+    html += weeklyLeaderboardHtml;
+    
     document.getElementById('content').innerHTML = html;
+}
+
+async function renderWeeklyLeaderboard(season, week) {
+    try {
+        const response = await fetch(`${API_BASE}/api/leaderboard/${season}/${week}`);
+        const standings = await response.json();
+        
+        if (standings.length === 0) {
+            return ''; // Don't show leaderboard if no picks scored yet
+        }
+        
+        let html = `
+            <div class="weekly-leaderboard">
+                <h2>Week ${week} Results</h2>
+                <table class="leaderboard-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Player</th>
+                            <th>Wins</th>
+                            <th>Losses</th>
+                            <th>Win %</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        // Calculate ranks with tie handling
+        let currentRank = 1;
+        let previousWins = null;
+        let previousLosses = null;
+        
+        standings.forEach((record, index) => {
+            const total = record.wins + record.losses;
+            const pct = total > 0 ? (record.wins / total * 100).toFixed(1) : '0.0';
+            
+            // Check if this record is tied with the previous one
+            if (index > 0 && record.wins === previousWins && record.losses === previousLosses) {
+                // Same rank as previous (tie)
+            } else {
+                // New rank
+                currentRank = index + 1;
+            }
+            
+            previousWins = record.wins;
+            previousLosses = record.losses;
+            
+            const rank = currentRank;
+            const isLastPlace = (index === standings.length - 1) && (rank !== 1);
+            const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : isLastPlace ? '😢' : rank;
+            
+            html += `
+                <tr class="rank-${rank}">
+                    <td>${medal}</td>
+                    <td class="player-name">${record.player_name}</td>
+                    <td>${record.wins}</td>
+                    <td>${record.losses}</td>
+                    <td><strong>${pct}%</strong></td>
+                </tr>
+            `;
+        });
+        
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+        
+        return html;
+    } catch (error) {
+        console.error('Error loading weekly leaderboard:', error);
+        return ''; // Fail silently
+    }
 }
 
 // ========================================
@@ -925,43 +1016,59 @@ async function showGameHistoryModal(awayTeam, homeTeam, season) {
             tableHtml += `<tr><td><strong>Week ${week}</strong></td>`;
             
             // Away team cell
-            if (awayGame && awayGame.status === 'final') {
+            if (awayGame) {
                 const isHome = awayGame.home_team === awayTeam;
                 const opponent = isHome ? awayGame.away_team : awayGame.home_team;
                 const oppAbbr = isHome ? awayGame.away_abbr : awayGame.home_abbr;
                 const oppLogo = isHome ? awayGame.away_logo : awayGame.home_logo;
                 const vsAt = isHome ? 'vs' : '@';
-                const teamScore = isHome ? awayGame.home_score : awayGame.away_score;
-                const oppScore = isHome ? awayGame.away_score : awayGame.home_score;
-                const won = teamScore > oppScore;
-                const resultClass = won ? 'win' : 'loss';
-                const resultText = won ? 'W' : 'L';
                 
-                tableHtml += `<td>
-                    <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
-                    <div>${teamScore}-${oppScore} <span class="${resultClass}">${resultText}</span></div>
-                </td>`;
+                if (awayGame.status === 'final') {
+                    const teamScore = isHome ? awayGame.home_score : awayGame.away_score;
+                    const oppScore = isHome ? awayGame.away_score : awayGame.home_score;
+                    const won = teamScore > oppScore;
+                    const resultClass = won ? 'win' : 'loss';
+                    const resultText = won ? 'W' : 'L';
+                    
+                    tableHtml += `<td>
+                        <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
+                        <div>${teamScore}-${oppScore} <span class="${resultClass}">${resultText}</span></div>
+                    </td>`;
+                } else {
+                    // Upcoming game - just show opponent
+                    tableHtml += `<td>
+                        <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
+                    </td>`;
+                }
             } else {
                 tableHtml += '<td><em>—</em></td>';
             }
             
             // Home team cell
-            if (homeGame && homeGame.status === 'final') {
+            if (homeGame) {
                 const isHome = homeGame.home_team === homeTeam;
                 const opponent = isHome ? homeGame.away_team : homeGame.home_team;
                 const oppAbbr = isHome ? homeGame.away_abbr : homeGame.home_abbr;
                 const oppLogo = isHome ? homeGame.away_logo : homeGame.home_logo;
                 const vsAt = isHome ? 'vs' : '@';
-                const teamScore = isHome ? homeGame.home_score : homeGame.away_score;
-                const oppScore = isHome ? homeGame.away_score : homeGame.home_score;
-                const won = teamScore > oppScore;
-                const resultClass = won ? 'win' : 'loss';
-                const resultText = won ? 'W' : 'L';
                 
-                tableHtml += `<td>
-                    <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
-                    <div>${teamScore}-${oppScore} <span class="${resultClass}">${resultText}</span></div>
-                </td>`;
+                if (homeGame.status === 'final') {
+                    const teamScore = isHome ? homeGame.home_score : homeGame.away_score;
+                    const oppScore = isHome ? homeGame.away_score : homeGame.home_score;
+                    const won = teamScore > oppScore;
+                    const resultClass = won ? 'win' : 'loss';
+                    const resultText = won ? 'W' : 'L';
+                    
+                    tableHtml += `<td>
+                        <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
+                        <div>${teamScore}-${oppScore} <span class="${resultClass}">${resultText}</span></div>
+                    </td>`;
+                } else {
+                    // Upcoming game - just show opponent
+                    tableHtml += `<td>
+                        <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
+                    </td>`;
+                }
             } else {
                 tableHtml += '<td><em>—</em></td>';
             }
@@ -987,34 +1094,40 @@ function closeGameHistoryModal(event) {
 // LEADERBOARD
 // ========================================
 
-async function showLeaderboard(viewType = 'season') {
+async function showLeaderboard() {
     const season = currentSeason;
-    const week = currentWeek || await getCurrentWeek();
     
-    let standings;
+    const response = await fetch(`${API_BASE}/api/leaderboard/${season}`);
+    const standings = await response.json();
     
-    if (viewType === 'week') {
-        const response = await fetch(`${API_BASE}/api/leaderboard/${season}/${week}`);
-        standings = await response.json();
-    } else {
-        const response = await fetch(`${API_BASE}/api/leaderboard/${season}`);
-        standings = await response.json();
+    // Initialize hidden players set if not exists
+    if (!window.hiddenLeaderboardPlayers) {
+        window.hiddenLeaderboardPlayers = new Set();
     }
-    
-    // Render
-    const title = viewType === 'week' ? `Week ${week} Results` : `${season} Season Standings`;
     
     let html = `
         <div class="leaderboard">
-            <h2>🏆 ${title}</h2>
+            <h2>🏆 ${season} Season Standings</h2>
             
-            <div class="leaderboard-controls">
-                <button onclick="showLeaderboard('season')" class="${viewType === 'season' ? 'active' : ''}">
-                    Season
-                </button>
-                <button onclick="showLeaderboard('week')" class="${viewType === 'week' ? 'active' : ''}">
-                    Week ${week}
-                </button>
+            <div class="player-filter">
+                <h4 style="margin: 0 0 10px 0; color: #666; font-size: 0.9em;">Show/Hide Players:</h4>
+                <div class="player-filter-chips">
+    `;
+    
+    // Add filter chips for all players
+    standings.forEach(record => {
+        const isHidden = window.hiddenLeaderboardPlayers.has(record.player_name);
+        const chipClass = isHidden ? 'filter-chip hidden' : 'filter-chip';
+        html += `
+            <div class="${chipClass}" onclick="toggleLeaderboardPlayer('${record.player_name.replace(/'/g, "\\'")}')">
+                ${record.player_name}
+                <span class="filter-icon">${isHidden ? '👁️' : '✓'}</span>
+            </div>
+        `;
+    });
+    
+    html += `
+                </div>
             </div>
             
             <table class="leaderboard-table">
@@ -1025,21 +1138,26 @@ async function showLeaderboard(viewType = 'season') {
                         <th>Wins</th>
                         <th>Losses</th>
                         <th>Win %</th>
-                        ${viewType === 'season' ? '<th>Weeks</th>' : ''}
+                        <th>Weeks</th>
                     </tr>
                 </thead>
                 <tbody>
     `;
     
     if (standings.length === 0) {
-        html += `<tr><td colspan="${viewType === 'season' ? '6' : '5'}" style="text-align: center; padding: 20px;">No scored picks yet!</td></tr>`;
+        html += `<tr><td colspan="6" style="text-align: center; padding: 20px;">No scored picks yet!</td></tr>`;
     } else {
-        // Calculate ranks with tie handling
+        // Filter out hidden players first
+        const visibleStandings = standings.filter(record => 
+            !window.hiddenLeaderboardPlayers.has(record.player_name)
+        );
+        
+        // Calculate ranks with tie handling on visible players only
         let currentRank = 1;
         let previousWins = null;
         let previousLosses = null;
         
-        standings.forEach((record, index) => {
+        visibleStandings.forEach((record, index) => {
             const total = record.wins + record.losses;
             const pct = total > 0 ? (record.wins / total * 100).toFixed(1) : '0.0';
             
@@ -1055,7 +1173,7 @@ async function showLeaderboard(viewType = 'season') {
             previousLosses = record.losses;
             
             const rank = currentRank;
-            const isLastPlace = (index === standings.length - 1) && (rank !== 1); // Last and not tied for first
+            const isLastPlace = (index === visibleStandings.length - 1) && (rank !== 1); // Last and not tied for first
             const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : isLastPlace ? '😢' : rank;
             
             html += `
@@ -1065,7 +1183,7 @@ async function showLeaderboard(viewType = 'season') {
                     <td>${record.wins}</td>
                     <td>${record.losses}</td>
                     <td><strong>${pct}%</strong></td>
-                    ${viewType === 'season' ? `<td>${record.weeks_played || 0}</td>` : ''}
+                    <td>${record.weeks_played || 0}</td>
                 </tr>
             `;
         });
@@ -1074,10 +1192,30 @@ async function showLeaderboard(viewType = 'season') {
     html += `
                 </tbody>
             </table>
-            
-            <button onclick="loadSchedule()" class="back-button">← Back to Picks</button>
         </div>
     `;
     
     document.getElementById('content').innerHTML = html;
+    
+    // Update view button states
+    document.getElementById('picksViewBtn').classList.remove('active');
+    document.getElementById('leaderboardViewBtn').classList.add('active');
+    
+    // Hide week navigation row when showing leaderboard
+    document.querySelector('.week-title-row').style.display = 'none';
+}
+
+function toggleLeaderboardPlayer(playerName) {
+    if (!window.hiddenLeaderboardPlayers) {
+        window.hiddenLeaderboardPlayers = new Set();
+    }
+    
+    if (window.hiddenLeaderboardPlayers.has(playerName)) {
+        window.hiddenLeaderboardPlayers.delete(playerName);
+    } else {
+        window.hiddenLeaderboardPlayers.add(playerName);
+    }
+    
+    // Refresh the leaderboard
+    showLeaderboard();
 }

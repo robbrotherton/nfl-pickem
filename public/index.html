@@ -8,28 +8,31 @@
 </head>
 <body>
     <div class="container">
-        <h1>NFL Pick'em</h1>
-        <div class="controls">
-            <div class="controls-row">
-                <button onclick="showLeaderboard('season')">🏆 Leaderboard</button>
-            </div>
-
-            <!-- Player Management -->
-            <div class="player-management">
-                <h3>Players This Week</h3>
-                <div id="activePlayers" class="active-players">
-                    <!-- Populated dynamically with player chips and + button -->
-                </div>
-            </div>
+        <div style="text-align: right; margin-bottom: 10px;">
+            <button onclick="window.location.href='playoff-tree.html'" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">📊 Playoff Scenarios</button>
         </div>
+        <h1>NFL Pick'em</h1>
 
-        <!-- Add Player Modal -->
-        <div id="addPlayerModal" class="modal" onclick="closeAddPlayerMenu(event)">
+        <!-- Player Management Modal -->
+        <div id="playerModal" class="modal" onclick="closePlayerModal(event)">
             <div class="modal-content" onclick="event.stopPropagation()">
                 <div class="modal-header">
-                    <h3>Add Player</h3>
-                    <button onclick="closeAddPlayerMenu()" class="modal-close">✕</button>
+                    <h3>Manage Players</h3>
+                    <button onclick="closePlayerModal()" class="modal-close">✕</button>
                 </div>
+                
+                <!-- Active Players Section -->
+                <div id="activePlayersSection">
+                    <h4 style="margin-top: 0; color: #666;">Players This Week</h4>
+                    <div id="activePlayersList" class="active-players-list">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+                
+                <hr style="margin: 20px 0; border: none; border-top: 1px solid #ddd;">
+                
+                <!-- Add Players Section -->
+                <h4 style="color: #666;">Add Players</h4>
                 <div id="playerList" class="player-list">
                     <!-- Populated dynamically -->
                 </div>
@@ -49,6 +52,11 @@
             </div>
         </div>
 
+        <div class="view-selector">
+            <button onclick="loadSchedule()" class="view-btn" id="picksViewBtn" title="Weekly Picks">🏈 Picks</button>
+            <button onclick="showLeaderboard()" class="view-btn" id="leaderboardViewBtn" title="Season Leaderboard">🏆 Leaderboard</button>
+        </div>
+
         <div class="week-title-row">
             <button onclick="changeWeek(-1)" class="nav-arrow-btn">«</button>
             <div class="week-title">
@@ -63,8 +71,8 @@
                 <span> Season</span>
             </div>
             <button id="adminModeIndicator" onclick="exitAdminMode()" class="admin-indicator icon-btn" title="Exit Admin Mode" style="display: none;">🔓</button>
+            <button onclick="showPlayerModal()" class="icon-btn" title="Manage Players">👥</button>
             <button onclick="window.print()" class="print-btn icon-btn" title="Print">🖨️</button>
-            <button onclick="forceRefreshSchedule()" class="refresh-btn icon-btn" title="Refresh Scores">🔄</button>
         </div>
 
         <div id="content">

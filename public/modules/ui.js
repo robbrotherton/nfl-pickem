@@ -34,9 +34,6 @@ export function renderApp(onCalculateScenarios) {
     const teamDivision = targetTeam ? targetTeam.division : '';
     const teamNameWithDivision = targetTeam ? `${teamName} (${teamDivision})` : 'Team';
     
-    // Update page title
-    document.getElementById('pageTitle').textContent = `🏈 ${teamNameWithDivision} Playoff Calculator`;
-    
     document.getElementById('app').innerHTML = `
         <h2 style="text-align: center; margin: 30px 0 20px 0; font-size: 1.5em;">
             Week ${currentWeek} Standings (${REGULAR_SEASON_WEEKS - currentWeek} regular season games remaining)

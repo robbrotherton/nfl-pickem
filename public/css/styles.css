@@ -127,6 +127,36 @@ body {
    TITLE NAVIGATION
    ======================================== */
 
+.view-selector {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 20px 0 15px 0;
+}
+
+.view-btn {
+    padding: 10px 20px;
+    background-color: #f8f9fa;
+    color: #333;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+.view-btn:hover {
+    background-color: #e9ecef;
+    border-color: #adb5bd;
+}
+
+.view-btn.active {
+    background-color: #007bff;
+    color: white;
+    border-color: #007bff;
+}
+
 .week-title-row {
     display: flex;
     align-items: center;
@@ -225,21 +255,6 @@ body {
         opacity: 1;
         transform: translateY(0);
     }
-}
-
-.print-btn {
-    background-color: #6c757d;
-    color: white;
-    padding: 6px 12px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    transition: background-color 0.2s;
-}
-
-.print-btn:hover {
-    background-color: #5a6268;
 }
 
 .refresh-btn {
@@ -506,11 +521,37 @@ body {
     color: #333;
 }
 
-.player-list {
+.active-players-list {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 12px;
+    min-height: 40px;
+}
+
+.player-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.add-player-chip {
+    background-color: #e8f5e9;
+    border-color: #4caf50;
+    color: #2e7d32;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.add-player-chip:hover {
+    background-color: #c8e6c9;
+    transform: scale(1.05);
+}
+
+.add-player-chip span {
+    font-weight: bold;
+    font-size: 16px;
 }
 
 .player-option {
@@ -628,12 +669,6 @@ h1 {
     to { opacity: 1; transform: scale(1); }
 }
 
-.print-btn {
-    font-size: 20px;
-    padding: 6px 10px !important;
-    min-width: auto !important;
-}
-
 /* ========================================
    TABLE
    ======================================== */
@@ -658,6 +693,15 @@ th {
     position: sticky;
     top: 0;
     z-index: 10;
+}
+
+.clickable-header {
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.clickable-header:hover {
+    background-color: #e9ecef;
 }
 
 .team-column {
@@ -966,6 +1010,54 @@ th {
     font-weight: 600;
 }
 
+.player-filter {
+    margin-bottom: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+}
+
+.player-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background-color: #e3f2fd;
+    border: 2px solid #2196f3;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #1976d2;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.filter-chip:hover {
+    background-color: #bbdefb;
+    transform: scale(1.05);
+}
+
+.filter-chip.hidden {
+    background-color: #f5f5f5;
+    border-color: #ccc;
+    color: #999;
+    opacity: 0.6;
+}
+
+.filter-chip.hidden:hover {
+    opacity: 0.8;
+}
+
+.filter-icon {
+    font-size: 12px;
+}
+
 .back-button {
     display: block;
     margin: 20px auto 0;
@@ -982,6 +1074,26 @@ th {
 
 .back-button:hover {
     background-color: #5a6268;
+}
+
+/* Weekly Leaderboard (appears below picks) */
+.weekly-leaderboard {
+    margin-top: 40px;
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+}
+
+.weekly-leaderboard h2 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #333;
+    font-size: 1.5em;
+}
+
+.weekly-leaderboard .leaderboard-table {
+    max-width: 600px;
+    background-color: white;
 }
 
 /* ========================================
@@ -1032,6 +1144,14 @@ th {
         padding: 10px;
     }
 
+    .container > div[style*="text-align: right"] {
+        display: none; /* Hide top-right nav button */
+    }
+
+    .view-selector {
+        display: none;
+    }
+
     .controls {
         display: none;
     }
@@ -1039,7 +1159,8 @@ th {
     .print-btn,
     .refresh-btn,
     .admin-indicator,
-    .nav-arrow-btn {
+    .nav-arrow-btn,
+    .icon-btn {
         display: none !important;
     }
     
@@ -1153,11 +1274,6 @@ th {
     }
     
     .admin-indicator {
-        font-size: 12px;
-        padding: 4px 8px;
-    }
-    
-    .print-btn {
         font-size: 12px;
         padding: 4px 8px;
     }
@@ -1296,6 +1412,15 @@ th {
 
     .leaderboard-controls button {
         width: 100%;
+    }
+    
+    .weekly-leaderboard {
+        margin-top: 20px;
+        padding: 15px;
+    }
+    
+    .weekly-leaderboard h2 {
+        font-size: 18px;
     }
 
     .leaderboard-table {
