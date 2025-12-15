@@ -180,13 +180,27 @@ export async function fetchRemainingGames() {
                 const homeTeam = competition.competitors.find(t => t.homeAway === 'home');
                 const awayTeam = competition.competitors.find(t => t.homeAway === 'away');
                 
-                // Only include games that haven't been played yet
-                const status = competition.status.type.state;
-                if (status === 'pre') {
+                // Normalize ESPN status values into canonical statuses:
+                // 'final', 'in_progress', 'scheduled'
+                const compStatus = competition.status?.type || {};
+                const state = compStatus.state;
+                const completed = compStatus.completed || false;
+                let status;
+                if (completed || state === 'post' || state === 'closed' || state === 'final') {
+                    status = 'final';
+                } else if (state === 'in' || state === 'in_progress' || state === 'live') {
+                    status = 'in_progress';
+                } else {
+                    status = 'scheduled';
+                }
+
+                // Only include non-final games for remaining-games list
+                if (status !== 'final') {
                     games.push({
                         id: event.id,
                         week: week,
                         date: new Date(event.date),
+                        status,
                         homeTeam: {
                             id: homeTeam.team.id,
                             abbr: homeTeam.team.abbreviation,

@@ -317,8 +317,16 @@ export function renderKeyGames() {
     const allStandings = getAllStandings();
     
     let html = '';
-    
-    criticalGames.forEach(game => {
+    // Sort games by week (ascending) then by impact priority (Critical > High > Medium > Low)
+    const priority = { 'Critical': 3, 'High': 2, 'Medium': 1, 'Low': 0 };
+    const sortedGames = [...criticalGames].sort((a, b) => {
+        if (a.week !== b.week) return a.week - b.week;
+        const aPr = priority[a.impact?.label] ?? 0;
+        const bPr = priority[b.impact?.label] ?? 0;
+        return bPr - aPr; // higher priority first
+    });
+
+    sortedGames.forEach(game => {
         const impactClass = game.impact.label.toLowerCase();
         const userOutcome = userOutcomes[game.id];
         

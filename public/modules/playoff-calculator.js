@@ -37,6 +37,13 @@ export function identifyCriticalGames() {
     const targetAbbr = getTargetTeam();
     
     const critical = allGames.filter(game => {
+        // Exclude games that are already final — they should not be interactive
+        if (game.status === 'final') {
+            // Debug: occasionally games come through with non-canonical statuses; log if it's for the target division
+            // (This log is lightweight and helps diagnose stale or unexpected entries.)
+            // console.debug(`Skipping final game ${game.id} (${game.homeTeam.abbr} @ ${game.awayTeam.abbr})`);
+            return false;
+        }
         const homeInConference = conferenceStandings.some(t => t.abbr === game.homeTeam.abbr);
         const awayInConference = conferenceStandings.some(t => t.abbr === game.awayTeam.abbr);
         
