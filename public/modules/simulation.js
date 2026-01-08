@@ -1,5 +1,9 @@
 // simulation.js
 // Monte Carlo simulation and scenario analysis
+// 
+// Note: Simulations use the current tiebreaker data (head-to-head, conference records, etc.)
+// which represents actual game results. Future simulated games do not update tiebreaker metrics.
+// This means tiebreaker accuracy in simulations is approximate, especially for close scenarios.
 
 import { MONTE_CARLO_ITERATIONS, HOME_FIELD_ADVANTAGE } from './constants.js';
 import {
@@ -11,6 +15,7 @@ import {
     getTargetTeamData
 } from './state.js';
 import { calculatePlayoffTeams } from './playoff-calculator.js';
+import { createDivisionTiebreakSort, createWildCardTiebreakSort } from './tiebreakers.js';
 
 // ========================================
 // GAME OUTCOME PREDICTION
@@ -96,25 +101,17 @@ export function simulateScenario(outcomes) {
     const targetMadePlayoffs = playoffTeams.some(t => t.abbr === targetAbbr);
     const targetSeed = playoffTeams.find(t => t.abbr === targetAbbr)?.seed || null;
     
-    // Calculate target team's position in division
+    // Calculate target team's position in division (using tiebreaker sort)
     const targetTeamData = conferenceStandings.find(t => t.abbr === targetAbbr);
     const divisionTeams = standings.filter(t => t.division === targetTeamData.division)
-        .sort((a, b) => {
-            if (b.wins !== a.wins) return b.wins - a.wins;
-            if (a.losses !== b.losses) return a.losses - b.losses;
-            return 0;
-        });
+        .sort(createDivisionTiebreakSort());
     const targetDivisionRank = divisionTeams.findIndex(t => t.abbr === targetAbbr) + 1;
     
     // Calculate target team's position in wildcard race (among non-division winners)
     const divisionWinners = playoffTeams.filter(t => t.seed <= 4);
     const wildCardPool = conferenceStandings.filter(team => 
         !divisionWinners.find(dw => dw.id === team.id)
-    ).sort((a, b) => {
-        if (b.wins !== a.wins) return b.wins - a.wins;
-        if (a.losses !== b.losses) return a.losses - b.losses;
-        return 0;
-    });
+    ).sort(createWildCardTiebreakSort());
     const targetWildcardRank = wildCardPool.findIndex(t => t.abbr === targetAbbr) + 1;
     
     return {

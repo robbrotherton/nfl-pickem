@@ -11,6 +11,9 @@ import { getCurrentSeason, getCurrentWeek, setCurrentSeason, setCurrentWeek } fr
 /**
  * Fetch current season and week information from ESPN scoreboard
  * Sets the values in state
+ * 
+ * Note: For the playoff calculator, we always use regular season (seasontype=2) standings.
+ * If we're in the playoffs (seasontype=3), we should use week 18 standings.
  */
 export async function fetchCurrentSeasonInfo() {
     try {
@@ -18,9 +21,27 @@ export async function fetchCurrentSeasonInfo() {
         const data = await response.json();
         
         if (data.season && data.week) {
-            setCurrentSeason(data.season.year);
-            setCurrentWeek(data.week.number);
-            console.log(`📅 Current Season: ${data.season.year}, Week: ${data.week.number}`);
+            const seasonYear = data.season.year;
+            const seasonType = data.season.type; // 1=preseason, 2=regular, 3=postseason
+            const weekNumber = data.week.number;
+            
+            setCurrentSeason(seasonYear);
+            
+            // If we're in the playoffs (seasontype 3) or offseason, use week 18 (final regular season week)
+            // This ensures the playoff calculator shows final regular season standings
+            if (seasonType === 3 || seasonType === 4) {
+                setCurrentWeek(REGULAR_SEASON_WEEKS);
+                console.log(`📅 Current Season: ${seasonYear}, Playoffs Week ${weekNumber} - Using regular season Week ${REGULAR_SEASON_WEEKS} for standings`);
+            } else if (seasonType === 2) {
+                // Regular season - use current week (capped at 18)
+                setCurrentWeek(Math.min(weekNumber, REGULAR_SEASON_WEEKS));
+                console.log(`📅 Current Season: ${seasonYear}, Week: ${weekNumber}`);
+            } else {
+                // Preseason (type 1) - use fallback
+                setCurrentSeason(FALLBACK_SEASON);
+                setCurrentWeek(FALLBACK_WEEK);
+                console.warn('⚠️ Preseason detected, using fallback season/week values');
+            }
         } else {
             // Fallback to defaults if API doesn't provide
             setCurrentSeason(FALLBACK_SEASON);

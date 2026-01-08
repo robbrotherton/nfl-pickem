@@ -540,99 +540,90 @@ app.get('/api/common-games/:season', (req, res) => {
             WHERE season = ? AND status = 'final' AND winner IS NOT NULL
         `).all(season);
         
-        // For each pair of teams in the same division, calculate common games record
+        // Calculate common games record for ALL team pairs (not just within divisions)
+        // This is needed for wild card and division winner seeding tiebreakers
         const records = {};
+        const allTeams = Object.keys(TEAM_INFO);
         
-        // Group teams by division
-        const divisionTeams = {};
-        Object.entries(TEAM_INFO).forEach(([abbr, info]) => {
-            if (!divisionTeams[info.division]) {
-                divisionTeams[info.division] = [];
-            }
-            divisionTeams[info.division].push(abbr);
-        });
-        
-        // For each division, calculate common games for all pairs
-        Object.values(divisionTeams).forEach(teams => {
-            teams.forEach(team1 => {
-                teams.forEach(team2 => {
-                    if (team1 >= team2) return; // Only calculate once per pair
-                    
-                    // Find common opponents
-                    const team1Opponents = new Set();
-                    const team2Opponents = new Set();
-                    
-                    games.forEach(game => {
-                        if (game.away_abbr === team1) team1Opponents.add(game.home_abbr);
-                        if (game.home_abbr === team1) team1Opponents.add(game.away_abbr);
-                        if (game.away_abbr === team2) team2Opponents.add(game.home_abbr);
-                        if (game.home_abbr === team2) team2Opponents.add(game.away_abbr);
-                    });
-                    
-                    const commonOpponents = [...team1Opponents].filter(opp => 
-                        team2Opponents.has(opp) && opp !== team1 && opp !== team2
-                    );
-                    
-                    if (commonOpponents.length === 0) return;
-                    
-                    // Calculate records against common opponents
-                    let team1Wins = 0, team1Losses = 0, team1Ties = 0;
-                    let team2Wins = 0, team2Losses = 0, team2Ties = 0;
-                    
-                    games.forEach(game => {
-                        const winnerAbbr = TEAM_NAME_TO_ABBR[game.winner];
-                        
-                        // Team 1's games vs common opponents
-                        if (commonOpponents.includes(game.away_abbr) && game.home_abbr === team1) {
-                            if (winnerAbbr === team1) team1Wins++;
-                            else if (winnerAbbr === game.away_abbr) team1Losses++;
-                            else team1Ties++;
-                        }
-                        if (commonOpponents.includes(game.home_abbr) && game.away_abbr === team1) {
-                            if (winnerAbbr === team1) team1Wins++;
-                            else if (winnerAbbr === game.home_abbr) team1Losses++;
-                            else team1Ties++;
-                        }
-                        
-                        // Team 2's games vs common opponents
-                        if (commonOpponents.includes(game.away_abbr) && game.home_abbr === team2) {
-                            if (winnerAbbr === team2) team2Wins++;
-                            else if (winnerAbbr === game.away_abbr) team2Losses++;
-                            else team2Ties++;
-                        }
-                        if (commonOpponents.includes(game.home_abbr) && game.away_abbr === team2) {
-                            if (winnerAbbr === team2) team2Wins++;
-                            else if (winnerAbbr === game.home_abbr) team2Losses++;
-                            else team2Ties++;
-                        }
-                    });
-                    
-                    // Store records for both teams in this matchup
-                    const key1 = `${team1}_vs_${team2}`;
-                    const key2 = `${team2}_vs_${team1}`;
-                    
-                    records[key1] = {
-                        team: team1,
-                        opponent: team2,
-                        wins: team1Wins,
-                        losses: team1Losses,
-                        ties: team1Ties,
-                        winPct: team1Wins + team1Losses + team1Ties > 0 
-                            ? (team1Wins + team1Ties * 0.5) / (team1Wins + team1Losses + team1Ties)
-                            : 0
-                    };
-                    
-                    records[key2] = {
-                        team: team2,
-                        opponent: team1,
-                        wins: team2Wins,
-                        losses: team2Losses,
-                        ties: team2Ties,
-                        winPct: team2Wins + team2Losses + team2Ties > 0 
-                            ? (team2Wins + team2Ties * 0.5) / (team2Wins + team2Losses + team2Ties)
-                            : 0
-                    };
+        // For each pair of teams, calculate common games record
+        allTeams.forEach(team1 => {
+            allTeams.forEach(team2 => {
+                if (team1 >= team2) return; // Only calculate once per pair
+                
+                // Find common opponents (teams that both team1 and team2 have played)
+                const team1Opponents = new Set();
+                const team2Opponents = new Set();
+                
+                games.forEach(game => {
+                    if (game.away_abbr === team1) team1Opponents.add(game.home_abbr);
+                    if (game.home_abbr === team1) team1Opponents.add(game.away_abbr);
+                    if (game.away_abbr === team2) team2Opponents.add(game.home_abbr);
+                    if (game.home_abbr === team2) team2Opponents.add(game.away_abbr);
                 });
+                
+                const commonOpponents = [...team1Opponents].filter(opp => 
+                    team2Opponents.has(opp) && opp !== team1 && opp !== team2
+                );
+                
+                if (commonOpponents.length === 0) return;
+                
+                // Calculate records against common opponents
+                let team1Wins = 0, team1Losses = 0, team1Ties = 0;
+                let team2Wins = 0, team2Losses = 0, team2Ties = 0;
+                
+                games.forEach(game => {
+                    const winnerAbbr = TEAM_NAME_TO_ABBR[game.winner];
+                    
+                    // Team 1's games vs common opponents
+                    if (commonOpponents.includes(game.away_abbr) && game.home_abbr === team1) {
+                        if (winnerAbbr === team1) team1Wins++;
+                        else if (winnerAbbr === game.away_abbr) team1Losses++;
+                        else team1Ties++;
+                    }
+                    if (commonOpponents.includes(game.home_abbr) && game.away_abbr === team1) {
+                        if (winnerAbbr === team1) team1Wins++;
+                        else if (winnerAbbr === game.home_abbr) team1Losses++;
+                        else team1Ties++;
+                    }
+                    
+                    // Team 2's games vs common opponents
+                    if (commonOpponents.includes(game.away_abbr) && game.home_abbr === team2) {
+                        if (winnerAbbr === team2) team2Wins++;
+                        else if (winnerAbbr === game.away_abbr) team2Losses++;
+                        else team2Ties++;
+                    }
+                    if (commonOpponents.includes(game.home_abbr) && game.away_abbr === team2) {
+                        if (winnerAbbr === team2) team2Wins++;
+                        else if (winnerAbbr === game.home_abbr) team2Losses++;
+                        else team2Ties++;
+                    }
+                });
+                
+                // Store records for both teams in this matchup
+                const key1 = `${team1}_vs_${team2}`;
+                const key2 = `${team2}_vs_${team1}`;
+                
+                records[key1] = {
+                    team: team1,
+                    opponent: team2,
+                    wins: team1Wins,
+                    losses: team1Losses,
+                    ties: team1Ties,
+                    winPct: team1Wins + team1Losses + team1Ties > 0 
+                        ? (team1Wins + team1Ties * 0.5) / (team1Wins + team1Losses + team1Ties)
+                        : 0
+                };
+                
+                records[key2] = {
+                    team: team2,
+                    opponent: team1,
+                    wins: team2Wins,
+                    losses: team2Losses,
+                    ties: team2Ties,
+                    winPct: team2Wins + team2Losses + team2Ties > 0 
+                        ? (team2Wins + team2Ties * 0.5) / (team2Wins + team2Losses + team2Ties)
+                        : 0
+                };
             });
         });
         

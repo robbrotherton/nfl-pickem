@@ -15,6 +15,7 @@ import {
     breakTieMultiTeam, 
     createDivisionTiebreakSort, 
     createConferenceTiebreakSort,
+    createWildCardTiebreakSort,
     conferenceRecords 
 } from './tiebreakers.js';
 
@@ -158,91 +159,94 @@ export function calculatePlayoffTeams(standings) {
     // Get division winners (best record in each division)
     const divisionWinners = [];
     Object.keys(divisions).forEach(div => {
-        const sorted = divisions[div].sort(createDivisionTiebreakSort());
+        const divisionTeams = divisions[div];
         
-        // Add tiebreaker reasons for division teams
-        for (let i = 0; i < sorted.length; i++) {
-            const teamA = sorted[i];
+        // First, do a basic sort by win percentage
+        divisionTeams.sort((a, b) => {
+            const aWinPct = a.winPct || 0;
+            const bWinPct = b.winPct || 0;
+            return bWinPct - aWinPct;
+        });
+        
+        // Now apply proper multi-team tiebreakers to groups with identical win percentage
+        const sortedDivision = [];
+        let i = 0;
+        while (i < divisionTeams.length) {
+            const currentTeam = divisionTeams[i];
+            const currentWinPct = currentTeam.winPct || 0;
             
-            // Find all teams in this division with the same W-L record
-            const tiedTeams = sorted.filter(t => 
-                t.wins === teamA.wins && t.losses === teamA.losses
-            );
-            
-            if (tiedTeams.length > 1 && !teamA.tiebreakReason) {
-                // Find the teams this team beat in the tiebreaker
-                const teamsBeaten = [];
-                for (let j = i + 1; j < sorted.length; j++) {
-                    const teamB = sorted[j];
-                    if (teamB.wins === teamA.wins && teamB.losses === teamA.losses) {
-                        teamsBeaten.push(teamB.abbr);
-                    }
-                }
-                
-                if (teamsBeaten.length > 0) {
-                    const reason = getTiebreakReason(teamA, sorted.find(t => t.abbr === teamsBeaten[0]), 'division');
-                    if (reason) {
-                        if (teamsBeaten.length > 1) {
-                            teamA.tiebreakReason = reason.replace(
-                                `over ${teamsBeaten[0]}`,
-                                `over ${teamsBeaten.join(' and ')}`
-                            );
-                        } else {
-                            teamA.tiebreakReason = reason;
-                        }
-                    }
+            // Find all teams with the same win percentage
+            const tiedGroup = [];
+            for (let j = i; j < divisionTeams.length; j++) {
+                const teamWinPct = divisionTeams[j].winPct || 0;
+                if (Math.abs(teamWinPct - currentWinPct) < 0.0001) {
+                    tiedGroup.push(divisionTeams[j]);
+                } else {
+                    break;
                 }
             }
+            
+            if (tiedGroup.length > 1) {
+                // Apply multi-team tiebreaker using DIVISION rules
+                const brokenTie = breakTieMultiTeam(tiedGroup, 'division');
+                sortedDivision.push(...brokenTie);
+            } else {
+                sortedDivision.push(tiedGroup[0]);
+            }
+            
+            i += tiedGroup.length;
         }
         
         // Add the division winner (preserving tiebreaker reason)
-        if (sorted[0]) {
+        if (sortedDivision[0]) {
             divisionWinners.push({ 
-                ...sorted[0], 
+                ...sortedDivision[0], 
                 isDivisionWinner: true,
-                tiebreakReason: sorted[0].tiebreakReason // Preserve the tiebreaker reason
+                tiebreakReason: sortedDivision[0].tiebreakReason // Preserve the tiebreaker reason
             });
         }
     });
     
-    // Sort division winners by record
-    divisionWinners.sort(createConferenceTiebreakSort());
+    // Sort division winners by record using conference tiebreakers
+    // First do basic sort by win percentage, then apply multi-team tiebreakers
+    divisionWinners.sort((a, b) => {
+        const aWinPct = a.winPct || 0;
+        const bWinPct = b.winPct || 0;
+        return bWinPct - aWinPct;
+    });
     
-    // Add tiebreaker reasons for division winners seeding (seeds 1-4)
-    for (let i = 0; i < divisionWinners.length; i++) {
-        const teamA = divisionWinners[i];
+    // Apply multi-team tiebreakers for tied division winners
+    const sortedDivisionWinners = [];
+    let dwi = 0;
+    while (dwi < divisionWinners.length) {
+        const currentTeam = divisionWinners[dwi];
+        const currentWinPct = currentTeam.winPct || 0;
         
-        // Find all division winners with the same W-L record as teamA
-        const tiedTeams = divisionWinners.filter(t => 
-            t.wins === teamA.wins && t.losses === teamA.losses
-        );
-        
-        // If there are multiple teams tied, add tiebreaker reason for teams that won the tiebreaker
-        if (tiedTeams.length > 1 && !teamA.tiebreakReason) {
-            // Find the teams this team beat in the tiebreaker (those that come after it)
-            const teamsBeaten = [];
-            for (let j = i + 1; j < divisionWinners.length; j++) {
-                const teamB = divisionWinners[j];
-                if (teamB.wins === teamA.wins && teamB.losses === teamA.losses) {
-                    teamsBeaten.push(teamB.abbr);
-                }
-            }
-            
-            if (teamsBeaten.length > 0 && conferenceRecords[teamA.abbr]) {
-                const aConf = conferenceRecords[teamA.abbr];
-                const firstBeatenTeam = divisionWinners.find(t => t.abbr === teamsBeaten[0]);
-                const bConf = conferenceRecords[firstBeatenTeam.abbr];
-                
-                if (aConf.wins > bConf.wins || (aConf.wins === bConf.wins && aConf.losses < bConf.losses)) {
-                    if (teamsBeaten.length > 1) {
-                        teamA.tiebreakReason = `Wins seeding tie break over ${teamsBeaten.join(' and ')} based on conference record (${aConf.wins}-${aConf.losses})`;
-                    } else {
-                        teamA.tiebreakReason = `Wins seeding tie break over ${teamsBeaten[0]} based on conference record (${aConf.wins}-${aConf.losses} vs ${bConf.wins}-${bConf.losses})`;
-                    }
-                }
+        // Find all division winners with the same win percentage
+        const tiedGroup = [];
+        for (let j = dwi; j < divisionWinners.length; j++) {
+            const teamWinPct = divisionWinners[j].winPct || 0;
+            if (Math.abs(teamWinPct - currentWinPct) < 0.0001) {
+                tiedGroup.push(divisionWinners[j]);
+            } else {
+                break;
             }
         }
+        
+        if (tiedGroup.length > 1) {
+            // For division winner seeding, use wild card tiebreakers (per NFL rules)
+            const brokenTie = breakTieMultiTeam(tiedGroup, 'wildcard');
+            sortedDivisionWinners.push(...brokenTie);
+        } else {
+            sortedDivisionWinners.push(tiedGroup[0]);
+        }
+        
+        dwi += tiedGroup.length;
     }
+    
+    // Replace divisionWinners with sorted version
+    divisionWinners.length = 0;
+    divisionWinners.push(...sortedDivisionWinners);
     
     // Get wild card teams (best remaining teams)
     const wildCardPool = standings.filter(team => 

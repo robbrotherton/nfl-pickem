@@ -16,7 +16,7 @@ import {
     getTargetTeamData
 } from './state.js';
 import { calculatePlayoffTeams } from './playoff-calculator.js';
-import { getTiebreakReason, headToHeadRecords, conferenceRecords, commonGamesRecords } from './tiebreakers.js';
+import { getTiebreakReason, createWildCardTiebreakSort, headToHeadRecords, conferenceRecords, commonGamesRecords } from './tiebreakers.js';
 import { REGULAR_SEASON_WEEKS } from './constants.js';
 
 // ========================================
@@ -151,55 +151,8 @@ function renderStandings(conference, targetElementId) {
     const nonPlayoffTeams = conferenceStandings.filter(t => !playoffIds.includes(t.id));
     
     // Sort non-playoff teams with tiebreakers
-    nonPlayoffTeams.sort((a, b) => {
-        // 1. Win percentage (properly handles ties)
-        const aWinPct = a.winPct || 0;
-        const bWinPct = b.winPct || 0;
-        if (Math.abs(bWinPct - aWinPct) > 0.0001) {
-            return bWinPct - aWinPct;
-        }
-        
-        // Teams have same win percentage - apply conference tiebreakers (same as wild card)
-        // 1. Head-to-head (if applicable)
-        const h2hKey1 = `${a.abbr}_vs_${b.abbr}`;
-        const h2hKey2 = `${b.abbr}_vs_${a.abbr}`;
-        if (headToHeadRecords[h2hKey1] && headToHeadRecords[h2hKey2]) {
-            const aH2HPct = headToHeadRecords[h2hKey1].winPct;
-            const bH2HPct = headToHeadRecords[h2hKey2].winPct;
-            
-            // Only apply if teams actually played each other
-            const totalGames = headToHeadRecords[h2hKey1].wins + headToHeadRecords[h2hKey1].losses + headToHeadRecords[h2hKey1].ties;
-            if (totalGames > 0 && Math.abs(bH2HPct - aH2HPct) > 0.001) {
-                return bH2HPct - aH2HPct;
-            }
-        }
-        
-        // 2. Conference record (if available)
-        if (conferenceRecords[a.abbr] && conferenceRecords[b.abbr]) {
-            const aConfWins = conferenceRecords[a.abbr].wins;
-            const bConfWins = conferenceRecords[b.abbr].wins;
-            const aConfLosses = conferenceRecords[a.abbr].losses;
-            const bConfLosses = conferenceRecords[b.abbr].losses;
-            
-            if (bConfWins !== aConfWins) return bConfWins - aConfWins;
-            if (aConfLosses !== bConfLosses) return aConfLosses - bConfLosses;
-        }
-        
-        // 3. Common games
-        const commonKey1 = `${a.abbr}_vs_${b.abbr}`;
-        const commonKey2 = `${b.abbr}_vs_${a.abbr}`;
-        if (commonGamesRecords[commonKey1] && commonGamesRecords[commonKey2]) {
-            const aCommonPct = commonGamesRecords[commonKey1].winPct;
-            const bCommonPct = commonGamesRecords[commonKey2].winPct;
-            
-            if (Math.abs(bCommonPct - aCommonPct) > 0.001) {
-                return bCommonPct - aCommonPct;
-            }
-        }
-        
-        // 4. Win percentage
-        return (b.winPct || 0) - (a.winPct || 0);
-    });
+    // Use createWildCardTiebreakSort which properly handles same-division teams
+    nonPlayoffTeams.sort(createWildCardTiebreakSort());
     
     // Add tiebreaker reasons for non-playoff teams
     for (let i = 0; i < nonPlayoffTeams.length; i++) {
