@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFL Postseason Predictor</title>
+    <link rel="stylesheet" href="css/playoff-tree.css">
+    <style>
+        .bracket-container { display: flex; justify-content: center; gap: 32px; margin-top: 32px; }
+        .bracket-round { min-width: 220px; }
+        .bracket-round h3 { text-align: center; margin-bottom: 12px; }
+        .game-card { background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; margin-bottom: 24px; padding: 16px; min-height: 90px; display: flex; flex-direction: column; align-items: center; }
+        .game-card.final { background: #e0ffe0; }
+        .game-card .teams { display: flex; justify-content: space-between; width: 100%; }
+        .game-card .team { display: flex; align-items: center; gap: 8px; }
+        .game-card .team img { width: 32px; height: 32px; object-fit: contain; }
+        .game-card .score { font-weight: bold; margin-left: 8px; }
+        .game-card .slider-row { margin-top: 10px; width: 100%; display: flex; align-items: center; gap: 8px; }
+        .game-card .winner-btn { margin-top: 8px; }
+        .placeholder { background: #f5f5f5; color: #aaa; text-align: center; border-radius: 8px; padding: 24px 0; min-height: 90px; margin-bottom: 24px; }
+        .reset-btn { margin: 24px auto 0 auto; display: block; padding: 8px 20px; background: #1976d2; color: #fff; border: none; border-radius: 5px; font-size: 1em; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div style="text-align: right; margin-bottom: 10px;">
+            <button onclick="window.location.href='index.html'" style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 14px;">← Back to Pick'em</button>
+        </div>
+        <h1>NFL Postseason Predictor</h1>
+        <p class="subtitle">Simulate playoff outcomes and adjust game probabilities</p>
+        <div id="bracketApp">
+            <div class="loading"><div class="spinner"></div>Loading playoff bracket...</div>
+        </div>
+        <button class="reset-btn" id="resetProbBtn" style="display:none;">Reset Probabilities</button>
+    </div>
+    <script type="module" src="postseason-app.js"></script>
+</body>
+</html>

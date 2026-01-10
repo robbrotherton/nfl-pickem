@@ -244,44 +244,49 @@ function shouldRefreshGames(cachedGames) {
 async function fetchAndCacheGames(week, season, seasonType = 2) {
     const response = await fetch(`${ESPN_API_BASE}/scoreboard?week=${week}&seasontype=${seasonType}`);
     const data = await response.json();
-    
+
     if (!data.events || data.events.length === 0) {
         return null;
     }
-    
+
+    // Use the season and seasonType from the API response (not from UI)
+    const apiSeason = data.season?.year || season;
+    const apiSeasonType = data.season?.type || seasonType;
+
     // Helper to get team logos - use nflfastr CDN for wordmarks
     const getTeamLogos = (team) => {
         let abbr = team.team.abbreviation.toUpperCase(); // Uppercase required for nflfastr URLs
-        
+
         // Handle abbreviation mismatches between ESPN and nflfastr
         const abbrMap = {
             'WSH': 'WAS'  // Washington Commanders: ESPN uses WSH, nflfastr uses WAS
         };
-        
+
         const wordmarkAbbr = abbrMap[abbr] || abbr;
-        
+
         const logo = team.team.logo || '';
         // nflfastr hosts wordmarks on GitHub - use raw.githubusercontent.com for direct access
         const wordmark = `https://raw.githubusercontent.com/nflverse/nflverse-pbp/master/wordmarks/${wordmarkAbbr}.png`;
         return { logo, wordmark };
     };
-    
+
     // Process and cache each game
     const games = [];
     for (const event of data.events) {
         const competition = event.competitions[0];
         const homeTeam = competition.competitors.find(t => t.homeAway === 'home');
         const awayTeam = competition.competitors.find(t => t.homeAway === 'away');
-        
+
         const isCompleted = event.status.type.completed;
         const isInProgress = event.status.type.state === 'in';
-        
+
         const awayLogos = getTeamLogos(awayTeam);
         const homeLogos = getTeamLogos(homeTeam);
-        
+
         const gameData = {
             id: event.id,
-            season: season,
+            season: apiSeason, // Use correct season from API
+            season_type: apiSeasonType, // Add season_type from API
             week: week,
             game_date: event.date,
             away_team: awayTeam.team.displayName,
@@ -303,38 +308,43 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
             period: event.status.period || null,
             clock: event.status.displayClock || ''
         };
-        
+
         // Save to database
         await fetch(`${API_BASE}/api/games`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(gameData)
         });
-        
+
         games.push(gameData);
     }
-    
+
     // Sort games by date/time, then alphabetically by home team
     games.sort((a, b) => {
         const dateCompare = new Date(a.game_date) - new Date(b.game_date);
         if (dateCompare !== 0) return dateCompare;
         return a.home_team.localeCompare(b.home_team);
     });
-    
+
     // Return the games with full data
     return games;
 }
 
 async function loadGames(week, season, seasonType = 2) {
     // Try cache first
-    const response = await fetch(`${API_BASE}/api/games/${season}/${week}`);
+    let url = `${API_BASE}/api/games/${season}/${week}`;
+    // For playoff weeks, add season_type=3 to the query
+    if (seasonType === 3) {
+        url += '?season_type=3';
+    }
+    const response = await fetch(url);
     const cachedGames = await response.json();
-    
+
     // Check if we need to refresh
     if (shouldRefreshGames(cachedGames)) {
         return await fetchAndCacheGames(week, season, seasonType);
     }
-    
+
     return cachedGames;
 }
 

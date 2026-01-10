@@ -33,6 +33,7 @@ db.exec(`
         id TEXT PRIMARY KEY,
         season INTEGER,
         week INTEGER,
+        season_type INTEGER,
         game_date TEXT,
         away_team TEXT,
         home_team TEXT,
@@ -84,7 +85,43 @@ try {
     // Column already exists, ignore
 }
 
+// Migrate existing games table to add season_type column if it doesn't exist
+try {
+    db.exec(`
+        ALTER TABLE games ADD COLUMN season_type INTEGER;
+    `);
+} catch (e) {
+    // Column already exists, ignore
+}
+
 // ========================================
+// Get all games for a season (optionally filter by season_type)
+app.get('/api/games/:season', (req, res) => {
+    try {
+        let { season } = req.params;
+        const { season_type } = req.query;
+        season = parseInt(season, 10);
+        if (!Number.isInteger(season) || season < 2000 || season > 2100) {
+            res.status(400).json({ error: 'Invalid or missing season parameter.' });
+            return;
+        }
+        let games;
+        if (season_type !== undefined) {
+            const seasonTypeInt = parseInt(season_type, 10);
+            games = db.prepare(
+                'SELECT * FROM games WHERE season = ? AND season_type = ? ORDER BY week, game_date, home_team'
+            ).all(season, seasonTypeInt);
+        } else {
+            games = db.prepare(
+                'SELECT * FROM games WHERE season = ? ORDER BY week, game_date, home_team'
+            ).all(season);
+        }
+        res.json(games);
+    } catch (error) {
+        console.error('Error fetching games for season:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 // API ENDPOINTS
 // ========================================
 
@@ -161,12 +198,59 @@ app.delete('/api/week-players/:season/:week/:player', (req, res) => {
 });
 
 // Get games for a week
+
+// Get all games for a week (with optional playoff filter)
 app.get('/api/games/:season/:week', (req, res) => {
     try {
-        const { season, week } = req.params;
-        const games = db.prepare(
-            'SELECT * FROM games WHERE season = ? AND week = ? ORDER BY game_date, home_team'
-        ).all(season, week);
+        let { season, week } = req.params;
+        const { playoff, season_type } = req.query;
+        // Validate season is a positive integer
+        season = parseInt(season, 10);
+        week = parseInt(week, 10);
+        let seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : undefined;
+        if (!Number.isInteger(season) || season < 2000 || season > 2100) {
+            res.status(400).json({ error: 'Invalid or missing season parameter.' });
+            console.warn(`[API] /api/games/: Invalid season param: ${season}`);
+            return;
+        }
+        if (!Number.isInteger(week) || week < 1 || week > 22) {
+            res.status(400).json({ error: 'Invalid or missing week parameter.' });
+            console.warn(`[API] /api/games/: Invalid week param: ${week}`);
+            return;
+        }
+        let games;
+        if (playoff === '1') {
+            // Playoff mode: fetch week 1 games after last week 18 date
+            const lastRegDateRow = db.prepare(
+                'SELECT MAX(game_date) as lastDate FROM games WHERE season = ? AND week = 18'
+            ).get(season);
+            const lastRegDate = lastRegDateRow ? lastRegDateRow.lastDate : null;
+            if (lastRegDate) {
+                games = db.prepare(
+                    'SELECT * FROM games WHERE season = ? AND week = ? AND game_date > ? ORDER BY game_date, home_team'
+                ).all(season, week, lastRegDate);
+            } else {
+                games = [];
+            }
+            console.log(`[API] /api/games/${season}/${week}?playoff=1: lastRegDate=${lastRegDate}, fetched ${games.length} games`);
+        } else if (seasonTypeInt !== undefined && !isNaN(seasonTypeInt)) {
+            // Filter by season_type if provided
+            games = db.prepare(
+                'SELECT * FROM games WHERE season = ? AND week = ? AND season_type = ? ORDER BY game_date, home_team'
+            ).all(season, week, seasonTypeInt);
+            console.log(`[API] /api/games/${season}/${week}?season_type=${seasonTypeInt}: fetched ${games.length} games`);
+        } else {
+            // Default: all games for week
+            games = db.prepare(
+                'SELECT * FROM games WHERE season = ? AND week = ? ORDER BY game_date, home_team'
+            ).all(season, week);
+            console.log(`[API] /api/games/${season}/${week}: fetched ${games.length} games`);
+        }
+        if (games.length > 0) {
+            games.forEach(g => {
+                console.log(`  - ${g.away_abbr} @ ${g.home_abbr} (${g.game_date}) status=${g.status}`);
+            });
+        }
         res.json(games);
     } catch (error) {
         console.error('Error fetching games:', error);
@@ -177,17 +261,17 @@ app.get('/api/games/:season/:week', (req, res) => {
 // Save/update game
 app.post('/api/games', (req, res) => {
     try {
-        const { id, season, week, game_date, away_team, home_team, away_abbr, home_abbr, 
-                away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status } = req.body;
-        
+        const { id, season, week, season_type, game_date, away_team, home_team, away_abbr, home_abbr, 
+            away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status } = req.body;
+
         db.prepare(`
             INSERT OR REPLACE INTO games 
-            (id, season, week, game_date, away_team, home_team, away_abbr, home_abbr, 
+            (id, season, week, season_type, game_date, away_team, home_team, away_abbr, home_abbr, 
              away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status, last_updated) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-        `).run(id, season, week, game_date, away_team, home_team, away_abbr, home_abbr, 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        `).run(id, season, week, season_type, game_date, away_team, home_team, away_abbr, home_abbr, 
                away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status);
-        
+
         res.json({ success: true });
     } catch (error) {
         console.error('Error saving game:', error);
