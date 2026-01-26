@@ -573,7 +573,7 @@ app.get('/api/conference-records/:season', (req, res) => {
         const games = db.prepare(`
             SELECT away_abbr, home_abbr, winner 
             FROM games 
-            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+            WHERE season = ? AND season_type = 2 AND status = 'final'
         `).all(season);
         
         // Initialize records for each team
@@ -623,7 +623,7 @@ app.get('/api/division-records/:season', (req, res) => {
         const games = db.prepare(`
             SELECT away_abbr, home_abbr, winner 
             FROM games 
-            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+            WHERE season = ? AND season_type = 2 AND status = 'final'
         `).all(season);
         
         // Initialize records for each team
@@ -674,7 +674,7 @@ app.get('/api/common-games/:season', (req, res) => {
         const games = db.prepare(`
             SELECT away_abbr, home_abbr, winner 
             FROM games 
-            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+            WHERE season = ? AND season_type = 2 AND status = 'final'
         `).all(season);
         
         // Calculate common games record for ALL team pairs (not just within divisions)
@@ -780,7 +780,7 @@ app.get('/api/head-to-head/:season', (req, res) => {
         const games = db.prepare(`
             SELECT away_abbr, home_abbr, winner 
             FROM games 
-            WHERE season = ? AND status = 'final' AND winner IS NOT NULL
+            WHERE season = ? AND season_type = 2 AND status = 'final'
         `).all(season);
         
         // Calculate head-to-head for all possible team pairs

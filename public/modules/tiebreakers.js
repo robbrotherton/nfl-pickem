@@ -13,6 +13,9 @@ export let conferenceRecords = {}; // Team -> {wins, losses, ties, winPct} in co
 export let divisionRecords = {}; // Team -> {wins, losses, ties, winPct} in division games
 export let commonGamesRecords = {}; // "TEAM1_vs_TEAM2" -> {team, opponent, wins, losses, ties, winPct}
 export let headToHeadRecords = {}; // "TEAM1_vs_TEAM2" -> {team, opponent, wins, losses, ties, winPct}
+export let teamGames = {}; // Team -> [{opponent, result}]
+export let teamRecords = {}; // Team -> {wins, losses, ties, winPct}
+export let strengthRecords = {}; // Team -> {sov, sos}
 
 // ========================================
 // DATA FETCHING
@@ -23,23 +26,135 @@ export async function fetchTiebreakRecords() {
         const season = getCurrentSeason();
         
         // Fetch all tiebreaker data in parallel (using relative URLs)
-        const [confResponse, divResponse, commonResponse, h2hResponse] = await Promise.all([
+        const [confResponse, divResponse, commonResponse, h2hResponse, gamesResponse] = await Promise.all([
             fetch(`/api/conference-records/${season}`),
             fetch(`/api/division-records/${season}`),
             fetch(`/api/common-games/${season}`),
-            fetch(`/api/head-to-head/${season}`)
+            fetch(`/api/head-to-head/${season}`),
+            fetch(`/api/games/${season}?season_type=2`)
         ]);
         
         conferenceRecords = await confResponse.json();
         divisionRecords = await divResponse.json();
         commonGamesRecords = await commonResponse.json();
         headToHeadRecords = await h2hResponse.json();
+        const games = await gamesResponse.json();
+        const finalGames = Array.isArray(games) ? games.filter(g => g.status === 'final') : [];
+        buildTeamGameData(finalGames);
         
         console.log('Tiebreaker records loaded successfully');
     } catch (error) {
         console.error('Error fetching tiebreaker records:', error);
         throw error;
     }
+}
+
+function buildTeamGameData(games) {
+    teamGames = {};
+    teamRecords = {};
+    strengthRecords = {};
+    if (!Array.isArray(games)) return;
+
+    games.forEach(game => {
+        const away = game.away_abbr;
+        const home = game.home_abbr;
+        if (!away || !home) return;
+
+        ensureTeamRecord(away);
+        ensureTeamRecord(home);
+        ensureTeamGames(away);
+        ensureTeamGames(home);
+
+        const winner = getWinnerAbbrFromGame(game);
+        if (winner === away) {
+            teamRecords[away].wins += 1;
+            teamRecords[home].losses += 1;
+            teamGames[away].push({ opponent: home, result: 'win' });
+            teamGames[home].push({ opponent: away, result: 'loss' });
+        } else if (winner === home) {
+            teamRecords[home].wins += 1;
+            teamRecords[away].losses += 1;
+            teamGames[home].push({ opponent: away, result: 'win' });
+            teamGames[away].push({ opponent: home, result: 'loss' });
+        } else {
+            teamRecords[away].ties += 1;
+            teamRecords[home].ties += 1;
+            teamGames[away].push({ opponent: home, result: 'tie' });
+            teamGames[home].push({ opponent: away, result: 'tie' });
+        }
+    });
+
+    Object.values(teamRecords).forEach(rec => {
+        rec.winPct = calculateWinPct(rec.wins, rec.losses, rec.ties);
+    });
+
+    buildStrengthRecords(games);
+}
+
+function ensureTeamRecord(teamAbbr) {
+    if (!teamRecords[teamAbbr]) {
+        teamRecords[teamAbbr] = { wins: 0, losses: 0, ties: 0, winPct: 0 };
+    }
+}
+
+function ensureTeamGames(teamAbbr) {
+    if (!teamGames[teamAbbr]) {
+        teamGames[teamAbbr] = [];
+    }
+}
+
+function getWinnerAbbrFromGame(game) {
+    const awayScore = Number.isFinite(game.away_score) ? game.away_score : null;
+    const homeScore = Number.isFinite(game.home_score) ? game.home_score : null;
+    if (awayScore === null || homeScore === null) return null;
+    if (awayScore > homeScore) return game.away_abbr;
+    if (homeScore > awayScore) return game.home_abbr;
+    return null;
+}
+
+function buildStrengthRecords(games) {
+    const sums = {};
+    Object.keys(teamRecords).forEach(team => {
+        sums[team] = {
+            sovWins: 0, sovLosses: 0, sovTies: 0,
+            sosWins: 0, sosLosses: 0, sosTies: 0
+        };
+    });
+
+    games.forEach(game => {
+        const away = game.away_abbr;
+        const home = game.home_abbr;
+        if (!away || !home) return;
+        const awayRec = teamRecords[away];
+        const homeRec = teamRecords[home];
+        if (!awayRec || !homeRec) return;
+
+        addOpponentRecord(sums[away], homeRec, 'sos');
+        addOpponentRecord(sums[home], awayRec, 'sos');
+
+        const winner = getWinnerAbbrFromGame(game);
+        if (winner === away) {
+            addOpponentRecord(sums[away], homeRec, 'sov');
+        } else if (winner === home) {
+            addOpponentRecord(sums[home], awayRec, 'sov');
+        }
+    });
+
+    strengthRecords = {};
+    Object.entries(sums).forEach(([team, rec]) => {
+        const sov = calculateWinPct(rec.sovWins, rec.sovLosses, rec.sovTies);
+        const sos = calculateWinPct(rec.sosWins, rec.sosLosses, rec.sosTies);
+        strengthRecords[team] = { sov, sos };
+    });
+}
+
+function addOpponentRecord(target, opponentRec, type) {
+    const winsKey = `${type}Wins`;
+    const lossesKey = `${type}Losses`;
+    const tiesKey = `${type}Ties`;
+    target[winsKey] += opponentRec.wins || 0;
+    target[lossesKey] += opponentRec.losses || 0;
+    target[tiesKey] += opponentRec.ties || 0;
 }
 
 // ========================================
@@ -128,6 +243,26 @@ export function getTiebreakReason(teamA, teamB, context = 'division') {
                 return null; // teamB wins this tiebreaker
             }
         }
+
+        // 5. Strength of victory
+        const aStrength = strengthRecords[teamA.abbr];
+        const bStrength = strengthRecords[teamB.abbr];
+        if (aStrength && bStrength) {
+            if (aStrength.sov > bStrength.sov + 0.0001) {
+                return `Wins tie break over ${teamB.abbr} based on strength of victory`;
+            } else if (bStrength.sov > aStrength.sov + 0.0001) {
+                return null; // teamB wins this tiebreaker
+            }
+        }
+
+        // 6. Strength of schedule
+        if (aStrength && bStrength) {
+            if (aStrength.sos > bStrength.sos + 0.0001) {
+                return `Wins tie break over ${teamB.abbr} based on strength of schedule`;
+            } else if (bStrength.sos > aStrength.sos + 0.0001) {
+                return null; // teamB wins this tiebreaker
+            }
+        }
     } else {
         // Wild card tiebreakers - check each step in order
         
@@ -177,6 +312,26 @@ export function getTiebreakReason(teamA, teamB, context = 'division') {
                 }
             }
         }
+
+        // 4. Strength of victory
+        const aStrength = strengthRecords[teamA.abbr];
+        const bStrength = strengthRecords[teamB.abbr];
+        if (aStrength && bStrength) {
+            if (aStrength.sov > bStrength.sov + 0.0001) {
+                return `Wins tie break over ${teamB.abbr} based on strength of victory`;
+            } else if (bStrength.sov > aStrength.sov + 0.0001) {
+                return null; // teamB wins this tiebreaker
+            }
+        }
+
+        // 5. Strength of schedule
+        if (aStrength && bStrength) {
+            if (aStrength.sos > bStrength.sos + 0.0001) {
+                return `Wins tie break over ${teamB.abbr} based on strength of schedule`;
+            } else if (bStrength.sos > aStrength.sos + 0.0001) {
+                return null; // teamB wins this tiebreaker
+            }
+        }
     }
     
     return null;
@@ -197,262 +352,367 @@ export function getTiebreakReason(teamA, teamB, context = 'division') {
  */
 export function breakTieMultiTeam(tiedTeams, context = 'wildcard') {
     if (tiedTeams.length <= 1) return tiedTeams;
-    
-    // Make a copy to avoid mutating the original
+
+    if (context === 'wildcard') {
+        return rankWildCardTeams(tiedTeams);
+    }
+
+    return rankDivisionTeams(tiedTeams);
+}
+
+function rankWildCardTeams(tiedTeams) {
     let remaining = [...tiedTeams];
     const sorted = [];
-    
+
     while (remaining.length > 0) {
         if (remaining.length === 1) {
             sorted.push(remaining[0]);
             break;
         }
-        
-        // If only 2 teams remain, use 2-club tiebreaker
-        if (remaining.length === 2) {
-            const sortFunc = context === 'division' 
-                ? createDivisionTiebreakSort() 
-                : createWildCardTiebreakSort();
-            remaining.sort(sortFunc);
-            
-            // Add tiebreaker reason for the winner
-            const winner = remaining[0];
-            const loser = remaining[1];
-            const reason = getTiebreakReason(winner, loser, context);
-            if (reason && !winner.tiebreakReason) {
-                winner.tiebreakReason = reason;
-            }
-            
-            sorted.push(...remaining);
-            break;
-        }
-        
-        // 3+ teams tied
-        let winner = null;
-        let tiebreakReason = null;
-        
-        if (context === 'wildcard') {
-            // Wild Card 3+ Clubs:
-            // Step 1: Apply division tiebreaker to eliminate all but highest-ranked club in each division
-            const teamsByDivision = {};
-            for (const team of remaining) {
-                const div = team.division || getDivision(team.abbr);
-                if (!teamsByDivision[div]) {
-                    teamsByDivision[div] = [];
-                }
-                teamsByDivision[div].push(team);
-            }
-            
-            // For each division with multiple tied teams, keep only the top one
-            const divisionWinners = [];
-            for (const [div, teams] of Object.entries(teamsByDivision)) {
-                if (teams.length === 1) {
-                    divisionWinners.push(teams[0]);
-                } else {
-                    // Apply division tiebreaker to find the top team from this division
-                    teams.sort(createDivisionTiebreakSort());
-                    divisionWinners.push(teams[0]);
-                }
-            }
-            
-            // If we eliminated some teams, continue with reduced set
-            if (divisionWinners.length < remaining.length) {
-                remaining = divisionWinners;
-                continue; // Restart with reduced set
-            }
-            
-            // Step 2: Head-to-head sweep (one team beat all others or lost to all others)
-            for (const team of remaining) {
-                let beatAllOthers = true;
-                let hasPlayedAll = true;
-                
-                for (const opponent of remaining) {
-                    if (team.abbr === opponent.abbr) continue;
-                    
-                    const h2hKey = `${team.abbr}_vs_${opponent.abbr}`;
-                    const h2hRec = headToHeadRecords[h2hKey];
-                    
-                    if (!h2hRec || h2hRec.wins + h2hRec.losses + h2hRec.ties === 0) {
-                        hasPlayedAll = false;
-                        beatAllOthers = false;
-                        break;
-                    }
-                    
-                    if (h2hRec.winPct <= 0.5) {
-                        beatAllOthers = false;
-                    }
-                }
-                
-                if (hasPlayedAll && beatAllOthers) {
-                    winner = team;
-                    const otherTeams = remaining.filter(t => t.abbr !== team.abbr).map(t => t.abbr);
-                    tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on head-to-head sweep`;
-                    break;
-                }
-            }
-            
-            // Step 3: Conference record
-            if (!winner) {
-                let bestConfWinPct = -1;
-                let bestTeam = null;
-                
-                for (const team of remaining) {
-                    const confRec = conferenceRecords[team.abbr];
-                    if (!confRec) continue;
-                    
-                    const winPct = calculateWinPct(confRec.wins, confRec.losses, confRec.ties);
-                    if (winPct > bestConfWinPct) {
-                        bestConfWinPct = winPct;
-                        bestTeam = team;
-                    }
-                }
-                
-                if (bestTeam) {
-                    // Check if this team is clearly better (no other team has same conf win pct)
-                    const teamsWithSameConfWinPct = remaining.filter(t => {
-                        const rec = conferenceRecords[t.abbr];
-                        if (!rec) return false;
-                        const pct = calculateWinPct(rec.wins, rec.losses, rec.ties);
-                        return Math.abs(pct - bestConfWinPct) < 0.0001;
-                    });
-                    
-                    if (teamsWithSameConfWinPct.length === 1) {
-                        winner = bestTeam;
-                        const confRec = conferenceRecords[bestTeam.abbr];
-                        const otherTeams = remaining.filter(t => t.abbr !== bestTeam.abbr).map(t => t.abbr);
-                        tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on conference record (${confRec.wins}-${confRec.losses})`;
-                    }
-                }
-            }
-            
-            // Step 4: Common games (not implemented for 3+ teams - complex)
-            
-        } else {
-            // Division 3+ Clubs tiebreaker
-            // Step 1: Head-to-head (best win-pct in games among the tied clubs)
-            // This requires calculating each team's record against ALL other tied teams combined
-            const h2hAgainstTied = {};
-            for (const team of remaining) {
-                let wins = 0, losses = 0, ties = 0;
-                for (const opponent of remaining) {
-                    if (team.abbr === opponent.abbr) continue;
-                    const h2hKey = `${team.abbr}_vs_${opponent.abbr}`;
-                    const h2hRec = headToHeadRecords[h2hKey];
-                    if (h2hRec) {
-                        wins += h2hRec.wins;
-                        losses += h2hRec.losses;
-                        ties += h2hRec.ties;
-                    }
-                }
-                h2hAgainstTied[team.abbr] = { wins, losses, ties, winPct: calculateWinPct(wins, losses, ties) };
-            }
-            
-            // Find the team with best H2H record against other tied teams
-            let bestH2HWinPct = -1;
-            let bestH2HTeams = [];
-            for (const team of remaining) {
-                const rec = h2hAgainstTied[team.abbr];
-                if (rec.wins + rec.losses + rec.ties > 0) {
-                    if (rec.winPct > bestH2HWinPct + 0.0001) {
-                        bestH2HWinPct = rec.winPct;
-                        bestH2HTeams = [team];
-                    } else if (Math.abs(rec.winPct - bestH2HWinPct) < 0.0001) {
-                        bestH2HTeams.push(team);
-                    }
-                }
-            }
-            
-            if (bestH2HTeams.length === 1) {
-                winner = bestH2HTeams[0];
-                const rec = h2hAgainstTied[winner.abbr];
-                const otherTeams = remaining.filter(t => t.abbr !== winner.abbr).map(t => t.abbr);
-                tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on head-to-head (${rec.wins}-${rec.losses})`;
-            }
-            
-            // Step 2: Division record
-            if (!winner) {
-                let bestDivWinPct = -1;
-                let bestTeam = null;
-                
-                for (const team of remaining) {
-                    const divRec = divisionRecords[team.abbr];
-                    if (!divRec) continue;
-                    
-                    const winPct = calculateWinPct(divRec.wins, divRec.losses, divRec.ties);
-                    if (winPct > bestDivWinPct + 0.0001) {
-                        bestDivWinPct = winPct;
-                        bestTeam = team;
-                    }
-                }
-                
-                if (bestTeam) {
-                    const teamsWithSameDivWinPct = remaining.filter(t => {
-                        const rec = divisionRecords[t.abbr];
-                        if (!rec) return false;
-                        const pct = calculateWinPct(rec.wins, rec.losses, rec.ties);
-                        return Math.abs(pct - bestDivWinPct) < 0.0001;
-                    });
-                    
-                    if (teamsWithSameDivWinPct.length === 1) {
-                        winner = bestTeam;
-                        const divRec = divisionRecords[bestTeam.abbr];
-                        const otherTeams = remaining.filter(t => t.abbr !== bestTeam.abbr).map(t => t.abbr);
-                        tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on division record (${divRec.wins}-${divRec.losses})`;
-                    }
-                }
-            }
-            
-            // Step 3: Common games (not fully implemented for 3+ teams)
-            
-            // Step 4: Conference record  
-            if (!winner) {
-                let bestConfWinPct = -1;
-                let bestTeam = null;
-                
-                for (const team of remaining) {
-                    const confRec = conferenceRecords[team.abbr];
-                    if (!confRec) continue;
-                    
-                    const winPct = calculateWinPct(confRec.wins, confRec.losses, confRec.ties);
-                    if (winPct > bestConfWinPct + 0.0001) {
-                        bestConfWinPct = winPct;
-                        bestTeam = team;
-                    }
-                }
-                
-                if (bestTeam) {
-                    const teamsWithSameConfWinPct = remaining.filter(t => {
-                        const rec = conferenceRecords[t.abbr];
-                        if (!rec) return false;
-                        const pct = calculateWinPct(rec.wins, rec.losses, rec.ties);
-                        return Math.abs(pct - bestConfWinPct) < 0.0001;
-                    });
-                    
-                    if (teamsWithSameConfWinPct.length === 1) {
-                        winner = bestTeam;
-                        const confRec = conferenceRecords[bestTeam.abbr];
-                        const otherTeams = remaining.filter(t => t.abbr !== bestTeam.abbr).map(t => t.abbr);
-                        tiebreakReason = `Wins tie break over ${otherTeams.join(' and ')} based on conference record (${confRec.wins}-${confRec.losses})`;
-                    }
-                }
-            }
-        }
-        
-        // If we found a winner, add them and remove from remaining
-        if (winner) {
-            winner.tiebreakReason = tiebreakReason;
-            sorted.push(winner);
-            remaining = remaining.filter(t => t.abbr !== winner.abbr);
-        } else {
-            // No clear tiebreaker found - this shouldn't happen with proper implementation
-            // but fall back to first team and continue
-            console.warn('No tiebreaker could resolve tie between:', remaining.map(t => t.abbr));
+
+        const divisionFinalists = selectDivisionFinalists(remaining);
+        const winner = selectMultiTeamWinner(divisionFinalists, 'wildcard');
+
+        if (!winner) {
+            console.warn('No wildcard tiebreaker winner found, falling back to first team.');
             sorted.push(remaining[0]);
             remaining = remaining.slice(1);
+            continue;
+        }
+
+        sorted.push(winner);
+        remaining = remaining.filter(t => t.abbr !== winner.abbr);
+    }
+
+    return sorted;
+}
+
+function rankDivisionTeams(tiedTeams) {
+    let remaining = [...tiedTeams];
+    const sorted = [];
+
+    while (remaining.length > 0) {
+        if (remaining.length === 1) {
+            sorted.push(remaining[0]);
+            break;
+        }
+
+        const winner = selectMultiTeamWinner(remaining, 'division');
+
+        if (!winner) {
+            console.warn('No division tiebreaker winner found, falling back to first team.');
+            sorted.push(remaining[0]);
+            remaining = remaining.slice(1);
+            continue;
+        }
+
+        sorted.push(winner);
+        remaining = remaining.filter(t => t.abbr !== winner.abbr);
+    }
+
+    return sorted;
+}
+
+function selectDivisionFinalists(teams) {
+    const teamsByDivision = {};
+    for (const team of teams) {
+        const div = team.division || getDivision(team.abbr);
+        if (!teamsByDivision[div]) {
+            teamsByDivision[div] = [];
+        }
+        teamsByDivision[div].push(team);
+    }
+
+    const finalists = [];
+    for (const divisionTeams of Object.values(teamsByDivision)) {
+        if (divisionTeams.length === 1) {
+            finalists.push(divisionTeams[0]);
+        } else {
+            divisionTeams.sort(createDivisionTiebreakSort());
+            finalists.push(divisionTeams[0]);
         }
     }
-    
-    return sorted;
+
+    return finalists;
+}
+
+function selectMultiTeamWinner(teams, context) {
+    if (teams.length === 1) return teams[0];
+
+    if (teams.length === 2) {
+        const sorter = context === 'division'
+            ? createDivisionTiebreakSort()
+            : createWildCardTiebreakSort();
+        const ordered = [...teams].sort(sorter);
+        const winner = ordered[0];
+        const loser = ordered[1];
+        const reason = getTiebreakReason(winner, loser, context);
+        if (reason && !winner.tiebreakReason) {
+            winner.tiebreakReason = reason;
+        }
+        return winner;
+    }
+
+    let remaining = [...teams];
+    const steps = context === 'division'
+        ? [
+            stepDivisionHeadToHead,
+            stepDivisionRecord,
+            stepCommonGames,
+            stepConferenceRecord,
+            stepStrengthOfVictory,
+            stepStrengthOfSchedule
+        ]
+        : [
+            stepWildcardHeadToHeadSweep,
+            stepConferenceRecord,
+            stepCommonGames,
+            stepStrengthOfVictory,
+            stepStrengthOfSchedule
+        ];
+
+    while (remaining.length > 1) {
+        let reduced = false;
+        for (const step of steps) {
+            const outcome = step(remaining, context);
+            if (!outcome) continue;
+
+            if (outcome.type === 'winner') {
+                if (outcome.reason && !outcome.winner.tiebreakReason) {
+                    outcome.winner.tiebreakReason = outcome.reason;
+                }
+                return outcome.winner;
+            }
+
+            if (outcome.type === 'reduce') {
+                remaining = outcome.teams;
+                reduced = true;
+                break;
+            }
+
+            if (outcome.type === 'eliminate') {
+                remaining = remaining.filter(t => !outcome.eliminate.has(t.abbr));
+                reduced = true;
+                break;
+            }
+        }
+
+        if (!reduced) break;
+    }
+
+    if (remaining.length === 1) return remaining[0];
+
+    const sorter = context === 'division'
+        ? createDivisionTiebreakSort()
+        : createWildCardTiebreakSort();
+    remaining.sort(sorter);
+    return remaining[0];
+}
+
+function stepWildcardHeadToHeadSweep(teams) {
+    let winner = null;
+    let reason = null;
+    const eliminations = new Set();
+
+    for (const team of teams) {
+        const record = getGroupHeadToHeadRecord(team, teams);
+        if (!record.hasPlayedAll || record.games === 0) {
+            continue;
+        }
+
+        if (record.winPct >= 0.9999) {
+            winner = team;
+            const otherTeams = teams.filter(t => t.abbr !== team.abbr).map(t => t.abbr);
+            reason = `Wins tie break over ${otherTeams.join(' and ')} based on head-to-head sweep`;
+            break;
+        }
+
+        if (record.winPct <= 0.0001) {
+            eliminations.add(team.abbr);
+        }
+    }
+
+    if (winner) {
+        return { type: 'winner', winner, reason };
+    }
+
+    if (eliminations.size > 0) {
+        return { type: 'eliminate', eliminate: eliminations };
+    }
+
+    return null;
+}
+
+function stepDivisionHeadToHead(teams) {
+    return reduceByMetric(
+        teams,
+        team => {
+            const rec = getGroupHeadToHeadRecord(team, teams);
+            return rec.games > 0 ? rec.winPct : null;
+        },
+        (winner, others) => `Wins tie break over ${others.join(' and ')} based on head-to-head`
+    );
+}
+
+function stepDivisionRecord(teams) {
+    return reduceByMetric(
+        teams,
+        team => {
+            const rec = divisionRecords[team.abbr];
+            return rec ? calculateWinPct(rec.wins, rec.losses, rec.ties) : null;
+        },
+        (winner, others) => `Wins tie break over ${others.join(' and ')} based on division record`
+    );
+}
+
+function stepConferenceRecord(teams) {
+    return reduceByMetric(
+        teams,
+        team => {
+            const rec = conferenceRecords[team.abbr];
+            return rec ? calculateWinPct(rec.wins, rec.losses, rec.ties) : null;
+        },
+        (winner, others) => `Wins tie break over ${others.join(' and ')} based on conference record`
+    );
+}
+
+function stepCommonGames(teams) {
+    const records = teams.map(team => getMultiTeamCommonRecord(team, teams));
+    if (records.some(rec => !rec || rec.games < 4)) {
+        return null;
+    }
+
+    const recordMap = new Map();
+    records.forEach((rec, idx) => {
+        recordMap.set(teams[idx].abbr, rec);
+    });
+
+    return reduceByMetric(
+        teams,
+        team => recordMap.get(team.abbr)?.winPct ?? null,
+        (winner, others) => `Wins tie break over ${others.join(' and ')} based on common games`
+    );
+}
+
+function stepStrengthOfVictory(teams) {
+    return reduceByMetric(
+        teams,
+        team => strengthRecords[team.abbr]?.sov ?? null,
+        (winner, others) => `Wins tie break over ${others.join(' and ')} based on strength of victory`
+    );
+}
+
+function stepStrengthOfSchedule(teams) {
+    return reduceByMetric(
+        teams,
+        team => strengthRecords[team.abbr]?.sos ?? null,
+        (winner, others) => `Wins tie break over ${others.join(' and ')} based on strength of schedule`
+    );
+}
+
+function reduceByMetric(teams, metricFn, reasonFn) {
+    let bestValue = null;
+    let bestTeams = [];
+
+    for (const team of teams) {
+        const value = metricFn(team);
+        if (value === null || Number.isNaN(value)) continue;
+        if (bestValue === null || value > bestValue + 0.0001) {
+            bestValue = value;
+            bestTeams = [team];
+        } else if (Math.abs(value - bestValue) < 0.0001) {
+            bestTeams.push(team);
+        }
+    }
+
+    if (bestTeams.length === 0) return null;
+    if (bestTeams.length === teams.length) return null;
+
+    if (bestTeams.length === 1) {
+        const winner = bestTeams[0];
+        const others = teams.filter(t => t.abbr !== winner.abbr).map(t => t.abbr);
+        return { type: 'winner', winner, reason: reasonFn(winner, others) };
+    }
+
+    return { type: 'reduce', teams: bestTeams };
+}
+
+function getGroupHeadToHeadRecord(team, group) {
+    let wins = 0;
+    let losses = 0;
+    let ties = 0;
+    let hasPlayedAll = true;
+
+    for (const opponent of group) {
+        if (team.abbr === opponent.abbr) continue;
+        const key = `${team.abbr}_vs_${opponent.abbr}`;
+        const rec = headToHeadRecords[key];
+        if (!rec || rec.wins + rec.losses + rec.ties === 0) {
+            hasPlayedAll = false;
+            continue;
+        }
+        wins += rec.wins;
+        losses += rec.losses;
+        ties += rec.ties;
+    }
+
+    const games = wins + losses + ties;
+    return {
+        wins,
+        losses,
+        ties,
+        games,
+        winPct: games > 0 ? calculateWinPct(wins, losses, ties) : 0,
+        hasPlayedAll
+    };
+}
+
+function getMultiTeamCommonRecord(team, tiedTeams) {
+    const commonOpponents = getCommonOpponents(tiedTeams);
+    if (commonOpponents.length === 0) return null;
+
+    const opponentSet = new Set(commonOpponents);
+    const games = teamGames[team.abbr] || [];
+    let wins = 0;
+    let losses = 0;
+    let ties = 0;
+
+    games.forEach(game => {
+        if (!opponentSet.has(game.opponent)) return;
+        if (game.result === 'win') wins += 1;
+        else if (game.result === 'loss') losses += 1;
+        else ties += 1;
+    });
+
+    const total = wins + losses + ties;
+    return {
+        wins,
+        losses,
+        ties,
+        games: total,
+        winPct: total > 0 ? calculateWinPct(wins, losses, ties) : 0
+    };
+}
+
+function getCommonOpponents(tiedTeams) {
+    const tiedSet = new Set(tiedTeams.map(t => t.abbr));
+    const opponentSets = tiedTeams.map(team => {
+        const opponents = new Set();
+        (teamGames[team.abbr] || []).forEach(game => {
+            if (!tiedSet.has(game.opponent)) {
+                opponents.add(game.opponent);
+            }
+        });
+        return opponents;
+    });
+
+    if (opponentSets.length === 0) return [];
+    let common = opponentSets[0];
+    opponentSets.slice(1).forEach(set => {
+        common = new Set([...common].filter(opp => set.has(opp)));
+    });
+
+    return [...common];
 }
 
 /**
@@ -491,8 +751,8 @@ export function createDivisionTiebreakSort() {
     // 2. Division record  
     // 3. Common games
     // 4. Conference record
-    // 5. Strength of victory (not implemented)
-    // 6. Strength of schedule (not implemented)
+    // 5. Strength of victory
+    // 6. Strength of schedule
     // 7-12. Various point differential metrics (not implemented)
     
     return (a, b) => {
@@ -538,6 +798,24 @@ export function createDivisionTiebreakSort() {
             const result = compareRecords(conferenceRecords[a.abbr], conferenceRecords[b.abbr]);
             if (result !== 0) return result;
         }
+
+        // 5. Strength of victory
+        if (strengthRecords[a.abbr] && strengthRecords[b.abbr]) {
+            const aSov = strengthRecords[a.abbr].sov || 0;
+            const bSov = strengthRecords[b.abbr].sov || 0;
+            if (Math.abs(bSov - aSov) > 0.0001) {
+                return bSov - aSov;
+            }
+        }
+
+        // 6. Strength of schedule
+        if (strengthRecords[a.abbr] && strengthRecords[b.abbr]) {
+            const aSos = strengthRecords[a.abbr].sos || 0;
+            const bSos = strengthRecords[b.abbr].sos || 0;
+            if (Math.abs(bSos - aSos) > 0.0001) {
+                return bSos - aSos;
+            }
+        }
         
         // 5+ Strength of victory, schedule, point differential - not implemented
         // Return 0 (maintain current order) if all implemented tiebreakers are tied
@@ -551,8 +829,8 @@ export function createWildCardTiebreakSort() {
     // 1. Head-to-head, if applicable
     // 2. Conference record
     // 3. Common games, minimum of four
-    // 4. Strength of victory (not implemented)
-    // 5. Strength of schedule (not implemented)
+    // 4. Strength of victory
+    // 5. Strength of schedule
     // 6-11. Various point differential metrics (not implemented)
     
     return (a, b) => {
@@ -608,6 +886,24 @@ export function createWildCardTiebreakSort() {
             if (aGames >= 4 && bGames >= 4) {
                 const result = compareRecords(aCommon, bCommon);
                 if (result !== 0) return result;
+            }
+        }
+
+        // 4. Strength of victory
+        if (strengthRecords[a.abbr] && strengthRecords[b.abbr]) {
+            const aSov = strengthRecords[a.abbr].sov || 0;
+            const bSov = strengthRecords[b.abbr].sov || 0;
+            if (Math.abs(bSov - aSov) > 0.0001) {
+                return bSov - aSov;
+            }
+        }
+
+        // 5. Strength of schedule
+        if (strengthRecords[a.abbr] && strengthRecords[b.abbr]) {
+            const aSos = strengthRecords[a.abbr].sos || 0;
+            const bSos = strengthRecords[b.abbr].sos || 0;
+            if (Math.abs(bSos - aSos) > 0.0001) {
+                return bSos - aSos;
             }
         }
         
@@ -669,8 +965,26 @@ export function createConferenceTiebreakSort() {
                 if (result !== 0) return result;
             }
         }
+
+        // 4. Strength of victory
+        if (strengthRecords[a.abbr] && strengthRecords[b.abbr]) {
+            const aSov = strengthRecords[a.abbr].sov || 0;
+            const bSov = strengthRecords[b.abbr].sov || 0;
+            if (Math.abs(bSov - aSov) > 0.0001) {
+                return bSov - aSov;
+            }
+        }
+
+        // 5. Strength of schedule
+        if (strengthRecords[a.abbr] && strengthRecords[b.abbr]) {
+            const aSos = strengthRecords[a.abbr].sos || 0;
+            const bSos = strengthRecords[b.abbr].sos || 0;
+            if (Math.abs(bSos - aSos) > 0.0001) {
+                return bSos - aSos;
+            }
+        }
         
-        // 4+ Not implemented
+    // 6+ Not implemented
         return 0;
     };
 }
