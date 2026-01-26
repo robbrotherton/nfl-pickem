@@ -7,6 +7,8 @@ const API_BASE = ''; // Same origin, no prefix needed
 let currentWeek = null;
 let currentSeason = new Date().getFullYear();
 let adminMode = false; // Allow picks for past games
+let cachedSeasonInfo = null;
+let leaderboardSeasonTypeFilter = 'all';
 
 // ========================================
 // INITIALIZATION
@@ -66,6 +68,21 @@ async function initSeasonSelector() {
         currentSeason = currentYear;
     }
     
+    // Prefer ESPN's current season year if available
+    const seasonInfo = await getCurrentSeasonInfo();
+    const espnSeason = seasonInfo?.seasonYear ? Number(seasonInfo.seasonYear) : null;
+    if (espnSeason) {
+        const optionValues = Array.from(seasonSelect.options).map(opt => String(opt.value));
+        if (!optionValues.includes(String(espnSeason))) {
+            const option = document.createElement('option');
+            option.value = espnSeason;
+            option.textContent = espnSeason;
+            seasonSelect.insertBefore(option, seasonSelect.firstChild);
+        }
+        seasonSelect.value = espnSeason;
+        currentSeason = espnSeason;
+    }
+
     // Resize the dropdown
     resizeSelect(seasonSelect);
 }
@@ -74,8 +91,8 @@ async function initWeekSelector() {
     const select = document.getElementById('weekSelect');
     const selectTitle = document.getElementById('weekSelectTitle');
     
-    // Get current week first
-    const current = await getCurrentWeek();
+    // Get current week/season type first
+    const current = await getCurrentWeekSelection();
     
     // Populate both dropdowns with the same options
     const populateSelect = (element) => {
@@ -96,6 +113,7 @@ async function initWeekSelector() {
             { value: 'wildcard', label: 'Wild Card' },
             { value: 'divisional', label: 'Divisional' },
             { value: 'conference', label: 'Conference Championships' },
+            { value: 'pro-bowl', label: 'Pro Bowl' },
             { value: 'superbowl', label: 'Super Bowl' }
         ];
         
@@ -184,7 +202,8 @@ function getSeasonTypeAndWeek(weekValue) {
         'wildcard': { week: 1, type: 3, label: 'Wild Card' },
         'divisional': { week: 2, type: 3, label: 'Divisional' },
         'conference': { week: 3, type: 3, label: 'Conference Championships' },
-        'superbowl': { week: 4, type: 3, label: 'Super Bowl' }
+        'pro-bowl': { week: 4, type: 3, label: 'Pro Bowl' },
+        'superbowl': { week: 5, type: 3, label: 'Super Bowl' }
     };
     
     if (playoffMap[weekValue]) {
@@ -196,26 +215,61 @@ function getSeasonTypeAndWeek(weekValue) {
     return { week: weekNum, type: 2, label: `Week ${weekNum}` };
 }
 
+function getLeaderboardSeasonTypeQuery() {
+    if (!leaderboardSeasonTypeFilter || leaderboardSeasonTypeFilter === 'all') {
+        return '';
+    }
+    return `season_type=${leaderboardSeasonTypeFilter}`;
+}
+
 // ========================================
 // ESPN API FUNCTIONS
 // ========================================
 
-async function getCurrentWeek() {
+async function getCurrentSeasonInfo() {
+    if (cachedSeasonInfo) return cachedSeasonInfo;
     try {
         const response = await fetch(`${ESPN_API_BASE}/scoreboard`);
         const data = await response.json();
-        if (data.week && data.week.number) {
-            return data.week.number;
-        }
-        // Fallback calculation
-        const now = new Date();
-        const seasonStart = new Date(now.getFullYear(), 8, 1); // September 1st
-        const weeksSinceStart = Math.floor((now - seasonStart) / (7 * 24 * 60 * 60 * 1000));
-        return Math.max(1, Math.min(18, weeksSinceStart + 1));
+        cachedSeasonInfo = {
+            seasonYear: data.season?.year || null,
+            seasonType: data.season?.type || null,
+            weekNumber: data.week?.number || null
+        };
+        return cachedSeasonInfo;
     } catch (error) {
-        console.error('Error getting current week:', error);
-        return 12; // Default to week 12
+        console.error('Error getting current season info:', error);
+        return null;
     }
+}
+
+function getFallbackRegularSeasonWeek() {
+    const now = new Date();
+    const seasonStart = new Date(now.getFullYear(), 8, 1); // September 1st
+    const weeksSinceStart = Math.floor((now - seasonStart) / (7 * 24 * 60 * 60 * 1000));
+    return Math.max(1, Math.min(18, weeksSinceStart + 1));
+}
+
+function mapPostseasonWeekToValue(weekNumber) {
+    const map = {
+        1: 'wildcard',
+        2: 'divisional',
+        3: 'conference',
+        4: 'pro-bowl',
+        5: 'superbowl'
+    };
+    return map[weekNumber] || 'wildcard';
+}
+
+async function getCurrentWeekSelection() {
+    const seasonInfo = await getCurrentSeasonInfo();
+    if (seasonInfo?.seasonType === 3 && seasonInfo?.weekNumber) {
+        return mapPostseasonWeekToValue(seasonInfo.weekNumber);
+    }
+    if (seasonInfo?.weekNumber) {
+        return String(Math.max(1, Math.min(18, seasonInfo.weekNumber)));
+    }
+    return String(getFallbackRegularSeasonWeek());
 }
 
 // ========================================
@@ -332,11 +386,7 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
 
 async function loadGames(week, season, seasonType = 2) {
     // Try cache first
-    let url = `${API_BASE}/api/games/${season}/${week}`;
-    // For playoff weeks, add season_type=3 to the query
-    if (seasonType === 3) {
-        url += '?season_type=3';
-    }
+    let url = `${API_BASE}/api/games/${season}/${week}?season_type=${seasonType}`;
     const response = await fetch(url);
     const cachedGames = await response.json();
 
@@ -357,7 +407,7 @@ async function forceRefreshSchedule() {
     const seasonType = weekInfo.type;
     
     // Delete cached games
-    const deleteResponse = await fetch(`${API_BASE}/api/games/${season}/${week}`, {
+    const deleteResponse = await fetch(`${API_BASE}/api/games/${season}/${week}?season_type=${seasonType}`, {
         method: 'DELETE'
     });
     
@@ -731,7 +781,7 @@ async function loadSchedule() {
         renderActivePlayersUI(weekPlayers);
         
         // Render schedule
-        await renderScheduleTable(games, weekPlayers, season, week);
+        await renderScheduleTable(games, weekPlayers, season, week, seasonType);
         
         // Update view button states
         document.getElementById('picksViewBtn').classList.add('active');
@@ -746,7 +796,7 @@ async function loadSchedule() {
     }
 }
 
-async function renderScheduleTable(games, weekPlayers, season, week) {
+async function renderScheduleTable(games, weekPlayers, season, week, seasonType) {
     const allPicks = await loadPicksForWeek(week, season);
     const playerNames = weekPlayers.map(p => p.player_name);
     
@@ -882,15 +932,24 @@ async function renderScheduleTable(games, weekPlayers, season, week) {
     html += '</tbody></table>';
     
     // Add weekly leaderboard below the picks
-    const weeklyLeaderboardHtml = await renderWeeklyLeaderboard(season, week);
+    const weeklyLeaderboardHtml = await renderWeeklyLeaderboard(season, week, seasonType);
     html += weeklyLeaderboardHtml;
     
     document.getElementById('content').innerHTML = html;
 }
 
-async function renderWeeklyLeaderboard(season, week) {
+async function renderWeeklyLeaderboard(season, week, seasonType) {
     try {
-        const response = await fetch(`${API_BASE}/api/leaderboard/${season}/${week}`);
+        let url = `${API_BASE}/api/leaderboard/${season}/${week}`;
+        if (seasonType) {
+            url += `?season_type=${seasonType}`;
+        } else {
+            const seasonTypeQuery = getLeaderboardSeasonTypeQuery();
+            if (seasonTypeQuery) {
+                url += `?${seasonTypeQuery}`;
+            }
+        }
+        const response = await fetch(url);
         const standings = await response.json();
         
         if (standings.length === 0) {
@@ -1106,8 +1165,11 @@ function closeGameHistoryModal(event) {
 
 async function showLeaderboard() {
     const season = currentSeason;
-    
-    const response = await fetch(`${API_BASE}/api/leaderboard/${season}`);
+    const seasonTypeQuery = getLeaderboardSeasonTypeQuery();
+    const url = seasonTypeQuery
+        ? `${API_BASE}/api/leaderboard/${season}?${seasonTypeQuery}`
+        : `${API_BASE}/api/leaderboard/${season}`;
+    const response = await fetch(url);
     const standings = await response.json();
     
     // Initialize hidden players set if not exists
@@ -1118,6 +1180,16 @@ async function showLeaderboard() {
     let html = `
         <div class="leaderboard">
             <h2>🏆 ${season} Season Standings</h2>
+            
+            <div class="leaderboard-filter">
+                <label for="leaderboardSeasonType" style="margin-right: 8px; color: #666; font-size: 0.9em;">Games:</label>
+                <select id="leaderboardSeasonType" onchange="changeLeaderboardSeasonType()">
+                    <option value="all" ${leaderboardSeasonTypeFilter === 'all' ? 'selected' : ''}>All</option>
+                    <option value="2" ${leaderboardSeasonTypeFilter === '2' ? 'selected' : ''}>Regular Season</option>
+                    <option value="3" ${leaderboardSeasonTypeFilter === '3' ? 'selected' : ''}>Postseason</option>
+                    <option value="1" ${leaderboardSeasonTypeFilter === '1' ? 'selected' : ''}>Preseason</option>
+                </select>
+            </div>
             
             <div class="player-filter">
                 <h4 style="margin: 0 0 10px 0; color: #666; font-size: 0.9em;">Show/Hide Players:</h4>
@@ -1227,5 +1299,12 @@ function toggleLeaderboardPlayer(playerName) {
     }
     
     // Refresh the leaderboard
+    showLeaderboard();
+}
+
+function changeLeaderboardSeasonType() {
+    const select = document.getElementById('leaderboardSeasonType');
+    if (!select) return;
+    leaderboardSeasonTypeFilter = select.value || 'all';
     showLeaderboard();
 }

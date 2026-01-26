@@ -282,8 +282,20 @@ app.post('/api/games', (req, res) => {
 // Delete games for a week (for refresh)
 app.delete('/api/games/:season/:week', (req, res) => {
     try {
-        const { season, week } = req.params;
-        db.prepare('DELETE FROM games WHERE season = ? AND week = ?').run(season, week);
+        let { season, week } = req.params;
+        const { season_type } = req.query;
+        season = parseInt(season, 10);
+        week = parseInt(week, 10);
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : null;
+        if (!Number.isInteger(season) || !Number.isInteger(week)) {
+            res.status(400).json({ error: 'Invalid season or week parameter.' });
+            return;
+        }
+        if (seasonTypeInt !== null && !isNaN(seasonTypeInt)) {
+            db.prepare('DELETE FROM games WHERE season = ? AND week = ? AND season_type = ?').run(season, week, seasonTypeInt);
+        } else {
+            db.prepare('DELETE FROM games WHERE season = ? AND week = ?').run(season, week);
+        }
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting games:', error);
@@ -376,21 +388,42 @@ app.post('/api/score-picks', (req, res) => {
 app.get('/api/leaderboard/:season', (req, res) => {
     try {
         const { season } = req.params;
+        const { season_type } = req.query;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : null;
         
-        const standings = db.prepare(`
-            SELECT 
-                player_name,
-                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as losses,
-                COUNT(DISTINCT week) as weeks_played
-            FROM picks
-            WHERE season = ? AND is_correct IS NOT NULL
-            GROUP BY player_name
-            ORDER BY 
-                CAST(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
-                NULLIF(COUNT(*), 0) DESC,
-                wins DESC
-        `).all(season);
+        let standings;
+        if (seasonTypeInt !== null && !isNaN(seasonTypeInt)) {
+            standings = db.prepare(`
+                SELECT 
+                    p.player_name,
+                    SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN p.is_correct = 0 THEN 1 ELSE 0 END) as losses,
+                    COUNT(DISTINCT p.week) as weeks_played
+                FROM picks p
+                JOIN games g ON g.id = p.game_id AND g.season = p.season
+                WHERE p.season = ? AND p.is_correct IS NOT NULL AND g.season_type = ?
+                GROUP BY p.player_name
+                ORDER BY 
+                    CAST(SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
+                    NULLIF(COUNT(*), 0) DESC,
+                    wins DESC
+            `).all(season, seasonTypeInt);
+        } else {
+            standings = db.prepare(`
+                SELECT 
+                    player_name,
+                    SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as losses,
+                    COUNT(DISTINCT week) as weeks_played
+                FROM picks
+                WHERE season = ? AND is_correct IS NOT NULL
+                GROUP BY player_name
+                ORDER BY 
+                    CAST(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
+                    NULLIF(COUNT(*), 0) DESC,
+                    wins DESC
+            `).all(season);
+        }
         
         res.json(standings);
     } catch (error) {
@@ -403,20 +436,40 @@ app.get('/api/leaderboard/:season', (req, res) => {
 app.get('/api/leaderboard/:season/:week', (req, res) => {
     try {
         const { season, week } = req.params;
+        const { season_type } = req.query;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : null;
         
-        const standings = db.prepare(`
-            SELECT 
-                player_name,
-                SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as losses
-            FROM picks
-            WHERE season = ? AND week = ? AND is_correct IS NOT NULL
-            GROUP BY player_name
-            ORDER BY 
-                CAST(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
-                NULLIF(COUNT(*), 0) DESC,
-                wins DESC
-        `).all(season, week);
+        let standings;
+        if (seasonTypeInt !== null && !isNaN(seasonTypeInt)) {
+            standings = db.prepare(`
+                SELECT 
+                    p.player_name,
+                    SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN p.is_correct = 0 THEN 1 ELSE 0 END) as losses
+                FROM picks p
+                JOIN games g ON g.id = p.game_id AND g.season = p.season
+                WHERE p.season = ? AND p.week = ? AND p.is_correct IS NOT NULL AND g.season_type = ?
+                GROUP BY p.player_name
+                ORDER BY 
+                    CAST(SUM(CASE WHEN p.is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
+                    NULLIF(COUNT(*), 0) DESC,
+                    wins DESC
+            `).all(season, week, seasonTypeInt);
+        } else {
+            standings = db.prepare(`
+                SELECT 
+                    player_name,
+                    SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as losses
+                FROM picks
+                WHERE season = ? AND week = ? AND is_correct IS NOT NULL
+                GROUP BY player_name
+                ORDER BY 
+                    CAST(SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) AS FLOAT) / 
+                    NULLIF(COUNT(*), 0) DESC,
+                    wins DESC
+            `).all(season, week);
+        }
         
         res.json(standings);
     } catch (error) {
