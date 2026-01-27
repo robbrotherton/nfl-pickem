@@ -2,7 +2,7 @@
 // Handles all tiebreaker calculations and multi-team tie resolution
 // Reference: https://www.nfl.com/standings/tie-breaking-procedures
 
-import { getCurrentSeason } from './state.js';
+import { getCurrentSeason, getCurrentWeek } from './state.js';
 import { getDivision, getConference } from './constants.js';
 
 // ========================================
@@ -41,6 +41,7 @@ export async function fetchTiebreakRecords() {
         const games = await gamesResponse.json();
         const finalGames = Array.isArray(games) ? games.filter(g => g.status === 'final') : [];
         buildTeamGameData(finalGames);
+        warnIfMissingRegularSeasonWeeks(finalGames);
         
         console.log('Tiebreaker records loaded successfully');
     } catch (error) {
@@ -155,6 +156,21 @@ function addOpponentRecord(target, opponentRec, type) {
     target[winsKey] += opponentRec.wins || 0;
     target[lossesKey] += opponentRec.losses || 0;
     target[tiesKey] += opponentRec.ties || 0;
+}
+
+function warnIfMissingRegularSeasonWeeks(games) {
+    if (!Array.isArray(games) || games.length === 0) return;
+    const currentWeek = getCurrentWeek() || 0;
+    if (currentWeek <= 0) return;
+
+    const weeksWithGames = new Set(games.map(game => game.week).filter(week => Number.isInteger(week)));
+    const missing = [];
+    for (let week = 1; week <= currentWeek; week++) {
+        if (!weeksWithGames.has(week)) missing.push(week);
+    }
+    if (missing.length > 0) {
+        console.warn(`⚠️ Missing regular season weeks in DB (season ${getCurrentSeason()}): ${missing.join(', ')}`);
+    }
 }
 
 // ========================================

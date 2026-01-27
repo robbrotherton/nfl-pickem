@@ -10,7 +10,7 @@ import {
     setCurrentBestCase,
     setCurrentWorstCase
 } from './modules/state.js';
-import { fetchCurrentSeasonInfo, fetchStandings, fetchRemainingGames } from './modules/api.js';
+import { fetchDbSeasonData } from './modules/api.js';
 import { fetchTiebreakRecords } from './modules/tiebreakers.js';
 import { identifyCriticalGames } from './modules/playoff-calculator.js';
 import {
@@ -38,15 +38,10 @@ import {
  */
 async function initializeApp() {
     try {
-        // Fetch current season/week info first
-        await fetchCurrentSeasonInfo();
-        
-        // Fetch data from ESPN and local server
-        const standings = await fetchStandings();
+        // Fetch data from DB only
+        const { standings, remainingGames } = await fetchDbSeasonData();
         setAllStandings(standings);
-        
-        const games = await fetchRemainingGames();
-        setAllGames(games);
+        setAllGames(remainingGames);
         
         await fetchTiebreakRecords();
         

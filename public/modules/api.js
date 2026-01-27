@@ -244,3 +244,147 @@ export async function fetchRemainingGames() {
     
     return games;
 }
+
+/**
+ * Fetch regular-season games from DB and build standings + remaining games without ESPN.
+ * Sets current season/week in state.
+ */
+export async function fetchDbSeasonData() {
+    const season = await resolveSeasonFromDb();
+    if (!season) {
+        throw new Error('No seasons found in DB.');
+    }
+
+    setCurrentSeason(season);
+
+    const gamesResponse = await fetch(`/api/games/${season}?season_type=2`);
+    const games = await gamesResponse.json();
+    const currentWeek = deriveCurrentWeekFromGames(games);
+    setCurrentWeek(currentWeek);
+
+    const standings = buildStandingsFromDbGames(games);
+    const remainingGames = buildRemainingGamesFromDbGames(games, currentWeek);
+
+    return { season, currentWeek, games, standings, remainingGames };
+}
+
+async function resolveSeasonFromDb() {
+    const currentSeason = getCurrentSeason();
+    if (currentSeason) return currentSeason;
+    const seasonsResponse = await fetch('/api/seasons');
+    const seasons = await seasonsResponse.json();
+    return Array.isArray(seasons) && seasons.length > 0 ? seasons[0] : null;
+}
+
+function deriveCurrentWeekFromGames(games) {
+    if (!Array.isArray(games) || games.length === 0) return 1;
+    const now = Date.now();
+    let maxWeek = 0;
+    games.forEach(game => {
+        const gameTime = Date.parse(game.game_date);
+        if (!Number.isNaN(gameTime) && gameTime <= now) {
+            if (Number.isInteger(game.week) && game.week > maxWeek) {
+                maxWeek = game.week;
+            }
+        }
+    });
+    return maxWeek > 0 ? maxWeek : 1;
+}
+
+function buildStandingsFromDbGames(games) {
+    const teamMap = new Map();
+    if (!Array.isArray(games)) return [];
+    games.forEach(game => {
+        if (game.status !== 'final') return;
+        const awayAbbr = game.away_abbr;
+        const homeAbbr = game.home_abbr;
+        if (!awayAbbr || !homeAbbr) return;
+
+        const awayScore = Number.isFinite(game.away_score) ? game.away_score : null;
+        const homeScore = Number.isFinite(game.home_score) ? game.home_score : null;
+
+        let awayResult = 'tie';
+        let homeResult = 'tie';
+        if (awayScore !== null && homeScore !== null) {
+            if (awayScore > homeScore) {
+                awayResult = 'win';
+                homeResult = 'loss';
+            } else if (homeScore > awayScore) {
+                awayResult = 'loss';
+                homeResult = 'win';
+            }
+        }
+
+        const awayTeam = ensureTeam(teamMap, awayAbbr, game.away_team, game.away_logo);
+        const homeTeam = ensureTeam(teamMap, homeAbbr, game.home_team, game.home_logo);
+
+        applyResult(awayTeam, awayResult);
+        applyResult(homeTeam, homeResult);
+    });
+
+    const standings = Array.from(teamMap.values()).map(team => {
+        const winPct = (team.wins + 0.5 * team.ties) / (team.wins + team.losses + team.ties || 1);
+        return {
+            ...team,
+            winPct,
+            season: getCurrentSeason(),
+            division: DIVISION_MAP[team.abbr] || 'Unknown',
+            conference: DIVISION_MAP[team.abbr]?.startsWith('NFC') ? 'NFC' : 'AFC',
+            clincher: ''
+        };
+    });
+
+    standings.sort((a, b) => {
+        if (b.winPct !== a.winPct) return b.winPct - a.winPct;
+        return 0;
+    });
+
+    return standings;
+}
+
+function ensureTeam(teamMap, abbr, name, logo) {
+    if (!teamMap.has(abbr)) {
+        teamMap.set(abbr, {
+            id: abbr,
+            name: name || abbr,
+            abbr,
+            logo: logo || '',
+            wins: 0,
+            losses: 0,
+            ties: 0
+        });
+    }
+    return teamMap.get(abbr);
+}
+
+function applyResult(team, result) {
+    if (result === 'win') team.wins += 1;
+    else if (result === 'loss') team.losses += 1;
+    else team.ties += 1;
+}
+
+function buildRemainingGamesFromDbGames(games, currentWeek) {
+    if (!Array.isArray(games)) return [];
+    return games
+        .filter(game => game.status !== 'final' && game.week >= currentWeek)
+        .map(game => ({
+            id: game.id,
+            week: game.week,
+            date: new Date(game.game_date),
+            status: game.status,
+            homeTeam: {
+                id: game.home_abbr,
+                abbr: game.home_abbr,
+                name: game.home_team,
+                logo: game.home_logo,
+                record: game.home_record || '0-0'
+            },
+            awayTeam: {
+                id: game.away_abbr,
+                abbr: game.away_abbr,
+                name: game.away_team,
+                logo: game.away_logo,
+                record: game.away_record || '0-0'
+            }
+        }));
+}

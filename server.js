@@ -5,9 +5,14 @@ const express = require('express');
 const Database = require('better-sqlite3');
 const cors = require('cors');
 const path = require('path');
+const https = require('https');
 
 const app = express();
 const db = new Database('nfl-pickem.db');
+
+const ESPN_SCOREBOARD_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
+const REGULAR_SEASON_WEEK_COUNT = 18;
+const PRESEASON_WEEK_COUNT = 4;
 
 // Middleware
 app.use(cors());
@@ -24,9 +29,10 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS week_players (
         season INTEGER,
         week INTEGER,
+        season_type INTEGER,
         player_name TEXT,
         display_order INTEGER,
-        PRIMARY KEY (season, week, player_name)
+        PRIMARY KEY (season, season_type, week, player_name)
     );
 
     CREATE TABLE IF NOT EXISTS games (
@@ -57,6 +63,7 @@ db.exec(`
         game_id TEXT,
         season INTEGER,
         week INTEGER,
+        season_type INTEGER,
         picked_team TEXT,
         is_correct INTEGER,
         picked_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -92,6 +99,76 @@ try {
     `);
 } catch (e) {
     // Column already exists, ignore
+}
+
+// Migrate week_players to include season_type in schema and primary key
+try {
+    const weekPlayersInfo = db.prepare(`PRAGMA table_info(week_players)`).all();
+    const hasSeasonType = weekPlayersInfo.some(col => col.name === 'season_type');
+    const pkColumns = weekPlayersInfo
+        .filter(col => col.pk > 0)
+        .sort((a, b) => a.pk - b.pk)
+        .map(col => col.name);
+    const needsPkUpdate = !pkColumns.includes('season_type');
+
+    if (!hasSeasonType || needsPkUpdate) {
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS week_players_new (
+                season INTEGER,
+                week INTEGER,
+                season_type INTEGER,
+                player_name TEXT,
+                display_order INTEGER,
+                PRIMARY KEY (season, season_type, week, player_name)
+            );
+        `);
+
+        if (hasSeasonType) {
+            db.exec(`
+                INSERT INTO week_players_new (season, week, season_type, player_name, display_order)
+                SELECT season, week, COALESCE(season_type, 2), player_name, display_order FROM week_players;
+            `);
+        } else {
+            db.exec(`
+                INSERT INTO week_players_new (season, week, season_type, player_name, display_order)
+                SELECT season, week, 2 as season_type, player_name, display_order FROM week_players;
+            `);
+        }
+
+        db.exec(`
+            DROP TABLE week_players;
+            ALTER TABLE week_players_new RENAME TO week_players;
+        `);
+    }
+} catch (e) {
+    console.error('Error migrating week_players schema:', e);
+}
+
+// Migrate picks table to add season_type column if it doesn't exist
+try {
+    db.exec(`
+        ALTER TABLE picks ADD COLUMN season_type INTEGER;
+    `);
+} catch (e) {
+    // Column already exists, ignore
+}
+
+// Backfill picks.season_type from games table when missing
+try {
+    db.exec(`
+        UPDATE picks
+        SET season_type = (
+            SELECT season_type FROM games WHERE games.id = picks.game_id
+        )
+        WHERE season_type IS NULL;
+    `);
+    db.exec(`
+        UPDATE picks
+        SET season_type = 2
+        WHERE season_type IS NULL;
+    `);
+} catch (e) {
+    console.error('Error backfilling picks season_type:', e);
 }
 
 // ========================================
@@ -149,13 +226,153 @@ app.get('/api/seasons', (req, res) => {
     }
 });
 
+// Seed missing season weeks (defaults to regular season; can be season_type=1 for preseason)
+app.post('/api/season/:season/seed', async (req, res) => {
+    try {
+        const season = parseInt(req.params.season, 10);
+        if (!Number.isInteger(season) || season < 2000 || season > 2100) {
+            res.status(400).json({ error: 'Invalid or missing season parameter.' });
+            return;
+        }
+
+        const force = req.query.force === '1';
+        const seasonTypeInt = req.query.season_type ? parseInt(req.query.season_type, 10) : 2;
+        if (![1, 2, 3].includes(seasonTypeInt)) {
+            res.status(400).json({ error: 'Invalid season_type (expected 1, 2, or 3).' });
+            return;
+        }
+        const delayMs = Math.max(0, parseInt(req.query.delay_ms, 10) || 300);
+
+        const weekCounts = db.prepare(`
+            SELECT week, COUNT(*) as games
+            FROM games
+            WHERE season = ? AND season_type = ?
+            GROUP BY week
+        `).all(season, seasonTypeInt);
+
+        const countsByWeek = {};
+        weekCounts.forEach(row => {
+            countsByWeek[row.week] = row.games;
+        });
+
+        const expectedGames = seasonTypeInt === 1 ? 16 : 16;
+        const maxWeeks = seasonTypeInt === 1 ? PRESEASON_WEEK_COUNT : REGULAR_SEASON_WEEK_COUNT;
+        const weeksToSeed = [];
+        for (let week = 1; week <= maxWeeks; week++) {
+            const count = countsByWeek[week] || 0;
+            if (force || count < expectedGames) {
+                weeksToSeed.push(week);
+            }
+        }
+
+        if (weeksToSeed.length === 0) {
+            res.json({ season, season_type: seasonTypeInt, message: 'No missing weeks to seed.' });
+            return;
+        }
+
+        let totalInserted = 0;
+        for (let i = 0; i < weeksToSeed.length; i++) {
+            const week = weeksToSeed[i];
+            const data = await fetchEspnScoreboard(week, seasonTypeInt);
+
+            const seasonYear = data?.season?.year;
+            const seasonType = data?.season?.type;
+            if (seasonYear && seasonYear !== season) {
+                res.status(400).json({ error: `ESPN returned season ${seasonYear} for requested season ${season}.` });
+                return;
+            }
+            if (seasonType && seasonType !== seasonTypeInt) {
+                res.status(400).json({ error: `ESPN returned season_type ${seasonType} for requested season_type ${seasonTypeInt}.` });
+                return;
+            }
+
+            const events = data?.events || [];
+            for (const event of events) {
+                const competition = event.competitions?.[0];
+                if (!competition) continue;
+                const homeTeam = competition.competitors?.find(t => t.homeAway === 'home');
+                const awayTeam = competition.competitors?.find(t => t.homeAway === 'away');
+                if (!homeTeam || !awayTeam) continue;
+
+                const isCompleted = event.status?.type?.completed;
+                const isInProgress = event.status?.type?.state === 'in';
+
+                const awayLogos = getTeamLogos(awayTeam);
+                const homeLogos = getTeamLogos(homeTeam);
+
+                const gameData = {
+                    id: event.id,
+                    season: seasonYear || season,
+                    season_type: seasonType || seasonTypeInt,
+                    week,
+                    game_date: event.date,
+                    away_team: awayTeam.team.displayName,
+                    home_team: homeTeam.team.displayName,
+                    away_abbr: awayTeam.team.abbreviation,
+                    home_abbr: homeTeam.team.abbreviation,
+                    away_logo: awayLogos.logo,
+                    home_logo: homeLogos.logo,
+                    away_wordmark: awayLogos.wordmark,
+                    home_wordmark: homeLogos.wordmark,
+                    away_record: awayTeam.records?.[0]?.summary || '0-0',
+                    home_record: homeTeam.records?.[0]?.summary || '0-0',
+                    away_score: isCompleted || isInProgress ? parseInt(awayTeam.score, 10) : null,
+                    home_score: isCompleted || isInProgress ? parseInt(homeTeam.score, 10) : null,
+                    winner: isCompleted ? competition.competitors.find(t => t.winner)?.team.displayName : null,
+                    status: isCompleted ? 'final' : isInProgress ? 'in_progress' : 'scheduled'
+                };
+
+                db.prepare(`
+                    INSERT OR REPLACE INTO games 
+                    (id, season, week, season_type, game_date, away_team, home_team, away_abbr, home_abbr, 
+                     away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status, last_updated) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                `).run(
+                    gameData.id,
+                    gameData.season,
+                    gameData.week,
+                    gameData.season_type,
+                    gameData.game_date,
+                    gameData.away_team,
+                    gameData.home_team,
+                    gameData.away_abbr,
+                    gameData.home_abbr,
+                    gameData.away_logo,
+                    gameData.home_logo,
+                    gameData.away_wordmark,
+                    gameData.home_wordmark,
+                    gameData.away_record,
+                    gameData.home_record,
+                    gameData.away_score,
+                    gameData.home_score,
+                    gameData.winner,
+                    gameData.status
+                );
+
+                totalInserted += 1;
+            }
+
+            if (i < weeksToSeed.length - 1 && delayMs > 0) {
+                await sleep(delayMs);
+            }
+        }
+
+        res.json({ season, season_type: seasonTypeInt, seededWeeks: weeksToSeed, totalInserted });
+    } catch (error) {
+        console.error('Error seeding season schedule:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get players for a specific week
 app.get('/api/week-players/:season/:week', (req, res) => {
     try {
         const { season, week } = req.params;
+        const { season_type } = req.query;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         const players = db.prepare(
-            'SELECT * FROM week_players WHERE season = ? AND week = ? ORDER BY display_order'
-        ).all(season, week);
+            'SELECT * FROM week_players WHERE season = ? AND week = ? AND season_type = ? ORDER BY display_order'
+        ).all(season, week, seasonTypeInt);
         res.json(players);
     } catch (error) {
         console.error('Error fetching week players:', error);
@@ -166,15 +383,16 @@ app.get('/api/week-players/:season/:week', (req, res) => {
 // Add player to a week
 app.post('/api/week-players', (req, res) => {
     try {
-        const { season, week, player_name, display_order } = req.body;
+        const { season, week, season_type, player_name, display_order } = req.body;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         
         // Add to players table if not exists
         db.prepare('INSERT OR IGNORE INTO players (name) VALUES (?)').run(player_name);
         
         // Add to week_players
         db.prepare(
-            'INSERT OR REPLACE INTO week_players (season, week, player_name, display_order) VALUES (?, ?, ?, ?)'
-        ).run(season, week, player_name, display_order);
+            'INSERT OR REPLACE INTO week_players (season, week, season_type, player_name, display_order) VALUES (?, ?, ?, ?, ?)'
+        ).run(season, week, seasonTypeInt, player_name, display_order);
         
         res.json({ success: true });
     } catch (error) {
@@ -187,9 +405,11 @@ app.post('/api/week-players', (req, res) => {
 app.delete('/api/week-players/:season/:week/:player', (req, res) => {
     try {
         const { season, week, player } = req.params;
+        const { season_type } = req.query;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         db.prepare(
-            'DELETE FROM week_players WHERE season = ? AND week = ? AND player_name = ?'
-        ).run(season, week, decodeURIComponent(player));
+            'DELETE FROM week_players WHERE season = ? AND week = ? AND season_type = ? AND player_name = ?'
+        ).run(season, week, seasonTypeInt, decodeURIComponent(player));
         res.json({ success: true });
     } catch (error) {
         console.error('Error removing week player:', error);
@@ -340,9 +560,11 @@ app.delete('/api/picks/:player/:gameId', (req, res) => {
 app.get('/api/picks/:season/:week', (req, res) => {
     try {
         const { season, week } = req.params;
+        const { season_type } = req.query;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         const picks = db.prepare(
-            'SELECT * FROM picks WHERE season = ? AND week = ?'
-        ).all(season, week);
+            'SELECT * FROM picks WHERE season = ? AND week = ? AND season_type = ?'
+        ).all(season, week, seasonTypeInt);
         res.json(picks);
     } catch (error) {
         console.error('Error fetching picks:', error);
@@ -353,13 +575,14 @@ app.get('/api/picks/:season/:week', (req, res) => {
 // Save a pick
 app.post('/api/picks', (req, res) => {
     try {
-        const { player_name, game_id, season, week, picked_team } = req.body;
+        const { player_name, game_id, season, week, season_type, picked_team } = req.body;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         
         db.prepare(`
             INSERT OR REPLACE INTO picks 
-            (player_name, game_id, season, week, picked_team, is_correct, picked_at) 
-            VALUES (?, ?, ?, ?, ?, NULL, datetime('now'))
-        `).run(player_name, game_id, season, week, picked_team);
+            (player_name, game_id, season, week, season_type, picked_team, is_correct, picked_at) 
+            VALUES (?, ?, ?, ?, ?, ?, NULL, datetime('now'))
+        `).run(player_name, game_id, season, week, seasonTypeInt, picked_team);
         
         res.json({ success: true });
     } catch (error) {
@@ -874,3 +1097,39 @@ process.on('SIGINT', () => {
     db.close();
     process.exit(0);
 });
+
+function fetchEspnScoreboard(week, seasonType = 2) {
+    const url = `${ESPN_SCOREBOARD_BASE}?seasontype=${seasonType}&week=${week}`;
+    return new Promise((resolve, reject) => {
+        https.get(url, res => {
+            let data = '';
+            res.on('data', chunk => {
+                data += chunk;
+            });
+            res.on('end', () => {
+                if (res.statusCode && res.statusCode >= 400) {
+                    reject(new Error(`ESPN fetch failed with status ${res.statusCode}`));
+                    return;
+                }
+                try {
+                    resolve(JSON.parse(data));
+                } catch (err) {
+                    reject(err);
+                }
+            });
+        }).on('error', err => reject(err));
+    });
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getTeamLogos(competitor) {
+    const abbr = competitor.team.abbreviation.toUpperCase();
+    const abbrMap = { WSH: 'WAS' };
+    const wordmarkAbbr = abbrMap[abbr] || abbr;
+    const logo = competitor.team.logo || '';
+    const wordmark = `https://raw.githubusercontent.com/nflverse/nflverse-pbp/master/wordmarks/${wordmarkAbbr}.png`;
+    return { logo, wordmark };
+}
