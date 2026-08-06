@@ -72,19 +72,17 @@ async function initSeasonSelector() {
         currentSeason = currentYear;
     }
     
-    // Prefer ESPN's current season year if available
-    const seasonInfo = await getCurrentSeasonInfo();
-    const espnSeason = seasonInfo?.seasonYear ? Number(seasonInfo.seasonYear) : null;
-    if (espnSeason) {
+    const preferredSeason = await getPreferredSeasonYear(currentYear);
+    if (preferredSeason) {
         const optionValues = Array.from(seasonSelect.options).map(opt => String(opt.value));
-        if (!optionValues.includes(String(espnSeason))) {
+        if (!optionValues.includes(String(preferredSeason))) {
             const option = document.createElement('option');
-            option.value = espnSeason;
-            option.textContent = espnSeason;
+            option.value = preferredSeason;
+            option.textContent = preferredSeason;
             seasonSelect.insertBefore(option, seasonSelect.firstChild);
         }
-        seasonSelect.value = espnSeason;
-        currentSeason = espnSeason;
+        seasonSelect.value = preferredSeason;
+        currentSeason = preferredSeason;
     }
 
     // Resize the dropdown
@@ -259,6 +257,28 @@ async function getCurrentSeasonInfo() {
     }
 }
 
+async function getPreferredSeasonYear(currentYear = new Date().getFullYear()) {
+    const seasonInfo = await getCurrentSeasonInfo();
+    const espnSeason = seasonInfo?.seasonYear ? Number(seasonInfo.seasonYear) : null;
+
+    if (espnSeason && espnSeason >= currentYear) {
+        return espnSeason;
+    }
+
+    try {
+        const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${currentYear}&week=1&seasontype=2`);
+        const data = await response.json();
+        const releasedSeason = data?.season?.year ? Number(data.season.year) : null;
+        if (releasedSeason === currentYear && Array.isArray(data.events) && data.events.length > 0) {
+            return currentYear;
+        }
+    } catch (error) {
+        console.warn(`Unable to confirm whether the ${currentYear} schedule is published yet:`, error);
+    }
+
+    return espnSeason;
+}
+
 function getFallbackRegularSeasonWeek() {
     const now = new Date();
     const seasonStart = new Date(now.getFullYear(), 8, 1); // September 1st
@@ -378,7 +398,7 @@ function shouldRefreshGames(cachedGames) {
 }
 
 async function fetchAndCacheGames(week, season, seasonType = 2) {
-    const response = await fetch(`${ESPN_API_BASE}/scoreboard?week=${week}&seasontype=${seasonType}`);
+    const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${season}&week=${week}&seasontype=${seasonType}`);
     const data = await response.json();
 
     if (!data.events || data.events.length === 0) {
@@ -904,13 +924,26 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType)
     
     games.forEach(game => {
         const gameDate = new Date(game.game_date);
-        let dateStr = gameDate.toLocaleDateString('en-US', { 
-            weekday: 'short', 
-            month: 'short', 
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit'
-        });
+        const isLocalMidnight = gameDate.getHours() === 0 && gameDate.getMinutes() === 0;
+        let dateStr;
+
+        if (game.status === 'scheduled' && isLocalMidnight) {
+            const dateOnly = gameDate.toLocaleDateString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric'
+            });
+            dateStr = `${dateOnly} - TBD`;
+        } else {
+            dateStr = gameDate.toLocaleDateString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+        }
+
         // Add FINAL to date string if game is complete
         if (game.status === 'final') {
             dateStr += ' - FINAL';

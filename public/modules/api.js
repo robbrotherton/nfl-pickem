@@ -263,9 +263,10 @@ export async function fetchDbSeasonData() {
     setCurrentWeek(currentWeek);
 
     const standings = buildStandingsFromDbGames(games);
+    const allGames = buildAllGamesFromDbGames(games);
     const remainingGames = buildRemainingGamesFromDbGames(games, currentWeek);
 
-    return { season, currentWeek, games, standings, remainingGames };
+    return { season, currentWeek, games, standings, allGames, remainingGames };
 }
 
 async function resolveSeasonFromDb() {
@@ -387,4 +388,30 @@ function buildRemainingGamesFromDbGames(games, currentWeek) {
                 record: game.away_record || '0-0'
             }
         }));
+}
+
+function buildAllGamesFromDbGames(games) {
+    if (!Array.isArray(games)) return [];
+    return games.map(game => ({
+        id: game.id,
+        week: game.week,
+        date: new Date(game.game_date),
+        status: game.status,
+        home_score: Number.isFinite(game.home_score) ? game.home_score : null,
+        away_score: Number.isFinite(game.away_score) ? game.away_score : null,
+        homeTeam: {
+            id: game.home_abbr,
+            abbr: game.home_abbr,
+            name: game.home_team,
+            logo: game.home_logo,
+            record: game.home_record || '0-0'
+        },
+        awayTeam: {
+            id: game.away_abbr,
+            abbr: game.away_abbr,
+            name: game.away_team,
+            logo: game.away_logo,
+            record: game.away_record || '0-0'
+        }
+    }));
 }

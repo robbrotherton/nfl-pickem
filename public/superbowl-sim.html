@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>nfl playoff simulator 2025</title>
+<style>
+body{font-family:sans-serif;padding:14px}
+.game{margin:6px 0}
+input[type=range]{width:180px}
+table{border-collapse:collapse;margin-top:14px}
+th,td{border:1px solid #999;padding:4px 6px;text-align:right}
+th:first-child,td:first-child{text-align:left}
+</style>
+</head>
+<body>
+
+<h2>2025–26 nfl playoff simulator (wildcard sliders)</h2>
+
+sims:
+<input id="nsims" type="number" value="20000" min="1000" step="1000">
+<button onclick="run()">run</button>
+
+<div id="controls"></div>
+<div id="results"></div>
+
+<script>
+// ---------- teams with real seeds ----------
+function getRecordProb(a, b) {
+   const aPct = a.winPct ?? 0.5;
+   const bPct = b.winPct ?? 0.5;
+   const total = aPct + bPct;
+   if (total === 0) return 0.5;
+   return aPct / total;
+}
+
+const teams = [
+ // AFC
+ {id:'A1',name:'Denver Broncos',conf:'afc',seed:1,winPct:0.765},
+ {id:'A2',name:'New England Patriots',conf:'afc',seed:2,winPct:0.706},
+ {id:'A3',name:'Jacksonville Jaguars',conf:'afc',seed:3,winPct:0.647},
+ {id:'A4',name:'Pittsburgh Steelers',conf:'afc',seed:4,winPct:0.588},
+ {id:'A5',name:'Houston Texans',conf:'afc',seed:5,winPct:0.588},
+ {id:'A6',name:'Buffalo Bills',conf:'afc',seed:6,winPct:0.529},
+ {id:'A7',name:'LA Chargers',conf:'afc',seed:7,winPct:0.471},
+ // NFC
+ {id:'N1',name:'Seattle Seahawks',conf:'nfc',seed:1,winPct:0.765},
+ {id:'N2',name:'Chicago Bears',conf:'nfc',seed:2,winPct:0.706},
+ {id:'N3',name:'Philadelphia Eagles',conf:'nfc',seed:3,winPct:0.647},
+ {id:'N4',name:'Carolina Panthers',conf:'nfc',seed:4,winPct:0.588},
+ {id:'N5',name:'LA Rams',conf:'nfc',seed:5,winPct:0.588},
+ {id:'N6',name:'SF 49ers',conf:'nfc',seed:6,winPct:0.529},
+ {id:'N7',name:'Green Bay Packers',conf:'nfc',seed:7,winPct:0.471},
+];
+
+// ---------- probs ----------
+const probs = {};
+const key = (a,b)=>a.id+'|'+b.id;
+function getProb(a,b){
+ if(!(key(a,b) in probs)){
+  probs[key(a,b)] = 0.5;
+  probs[key(b,a)] = 0.5;
+ }
+ return probs[key(a,b)];
+}
+function setProb(a,b,p){
+ probs[key(a,b)] = p;
+ probs[key(b,a)] = 1-p;
+}
+
+// ---------- simulation logic ----------
+function reseed(arr){
+ const s=[...arr].sort((x,y)=>x.seed-y.seed);
+ const out=[];
+ while(s.length>1) out.push([s.shift(),s.pop()]);
+ return out;
+}
+
+// simulate one conference: wildcard → divisional → conf
+function simulateConf(confTeams, stats){
+ let alive = confTeams.slice();
+ // wildcard pk
+ const bye = alive.find(t=>t.seed===1);
+ alive = alive.filter(t=>t.seed!==1);
+
+ let winners = [];
+ reseed(alive).forEach(([a,b])=>{
+  const w = Math.random() < getProb(a,b) ? a : b;
+  winners.push(w);
+  stats[w.id].wc++;
+ });
+ alive = [bye, ...winners];
+
+ // divisional
+ winners = [];
+ reseed(alive).forEach(([a,b])=>{
+  const w = Math.random() < getRecordProb(a,b) ? a : b;
+  winners.push(w);
+  stats[w.id].div++;
+ });
+ alive = winners;
+
+ // conf champ
+ const champ = Math.random() < getRecordProb(alive[0], alive[1]) ? alive[0] : alive[1];
+ stats[champ.id].conf++;
+ return champ;
+}
+
+// ---------- UI sliders for wildcard games ----------
+function renderControls(){
+ const root=document.getElementById('controls');
+ root.innerHTML='<h3>wildcard matchups</h3>';
+ ['afc','nfc'].forEach(conf=>{
+  const confTeams=teams.filter(t=>t.conf===conf && t.seed!==1);
+    reseed(confTeams).forEach(([a,b])=>{
+     // Set initial slider to winPct-based probability
+     const initialProb = getRecordProb(a,b);
+     setProb(a,b, initialProb);
+     const p = Math.round(initialProb * 100);
+     const div=document.createElement('div');
+     div.className='game';
+     div.innerHTML=`
+        ${a.name} vs ${b.name}
+        <input type="range" min="0" max="100" value="${p}">
+        <span>${p}%</span>
+     `;
+     const slider=div.querySelector('input');
+     const label=div.querySelector('span');
+     slider.oninput=e=>{
+        const v=e.target.value/100;
+        setProb(a,b,v);
+        label.textContent=e.target.value+'%';
+     };
+     root.appendChild(div);
+    });
+ });
+}
+
+// ---------- run sims & render results ----------
+function run(){
+ const n = +document.getElementById('nsims').value;
+ const stats={};
+ teams.forEach(t=>stats[t.id]={wc:0,div:0,conf:0,sb:0});
+
+ for(let i=0;i<n;i++){
+  const afcChamp = simulateConf(teams.filter(t=>t.conf==='afc'), stats);
+  const nfcChamp = simulateConf(teams.filter(t=>t.conf==='nfc'), stats);
+  const sbWinner = Math.random() < 0.5 ? afcChamp : nfcChamp;
+  stats[sbWinner.id].sb++;
+ }
+
+ const rows=teams.map(t=>({
+  name:t.name,
+  wc:stats[t.id].wc/n,
+  div:stats[t.id].div/n,
+  conf:stats[t.id].conf/n,
+  sb:stats[t.id].sb/n
+ })).sort((a,b)=>b.sb - a.sb);
+
+ let html='<table><tr><th>team</th><th>wc%</th><th>div%</th><th>conf%</th><th>sb%</th></tr>';
+ rows.forEach(r=>{
+  html+=`<tr>
+   <td>${r.name}</td>
+   <td>${(100*r.wc).toFixed(1)}</td>
+   <td>${(100*r.div).toFixed(1)}</td>
+   <td>${(100*r.conf).toFixed(1)}</td>
+   <td>${(100*r.sb).toFixed(2)}</td>
+  </tr>`;
+ });
+ html+='</table>';
+ document.getElementById('results').innerHTML = html;
+}
+
+renderControls();
+</script>
+
+</body>
+</html>

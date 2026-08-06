@@ -243,12 +243,123 @@ h1 {
     font-weight: normal !important;
 }
 
+.scenario-item.scenario-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.seed-breakdown {
+    margin-top: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+    color: #cfd3d7;
+}
+
+.seed-info:hover::after {
+    white-space: pre-line;
+    text-align: left;
+    min-width: 180px;
+}
+
+.seed-chart {
+    margin-top: 8px;
+    display: none;
+    gap: 6px;
+}
+
+.seed-chart.is-open {
+    display: grid;
+}
+
+.seed-toggle {
+    margin-left: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+.seed-toggle:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.seed-chart-row {
+    display: grid;
+    grid-template-columns: 36px 1fr 32px;
+    gap: 8px;
+    align-items: center;
+    font-size: 0.8em;
+    color: #cfd3d7;
+}
+
+.seed-bar {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.seed-bar span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, rgba(76, 175, 80, 0.9), rgba(120, 220, 120, 0.9));
+}
+
+.seed-chart-row.missed .seed-bar span {
+    background: linear-gradient(90deg, rgba(255, 99, 99, 0.9), rgba(255, 150, 150, 0.9));
+}
+
+.seed-label {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.seed-count {
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Grid Layout */
 .main-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;
     margin-bottom: 20px;
+}
+
+/* Time travel controls */
+.time-travel-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin: 0 0 24px 0;
+    color: #ddd;
+}
+
+.time-travel-bar label {
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.time-travel-bar select {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.95em;
+}
+
+.time-travel-current {
+    opacity: 0.7;
+    font-size: 0.9em;
 }
 
 @media (max-width: 1024px) {

@@ -273,7 +273,7 @@ app.post('/api/season/:season/seed', async (req, res) => {
         let totalInserted = 0;
         for (let i = 0; i < weeksToSeed.length; i++) {
             const week = weeksToSeed[i];
-            const data = await fetchEspnScoreboard(week, seasonTypeInt);
+            const data = await fetchEspnScoreboard(season, week, seasonTypeInt);
 
             const seasonYear = data?.season?.year;
             const seasonType = data?.season?.type;
@@ -1098,8 +1098,8 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-function fetchEspnScoreboard(week, seasonType = 2) {
-    const url = `${ESPN_SCOREBOARD_BASE}?seasontype=${seasonType}&week=${week}`;
+function fetchEspnScoreboard(season, week, seasonType = 2) {
+    const url = `${ESPN_SCOREBOARD_BASE}?dates=${season}&seasontype=${seasonType}&week=${week}`;
     return new Promise((resolve, reject) => {
         https.get(url, res => {
             let data = '';

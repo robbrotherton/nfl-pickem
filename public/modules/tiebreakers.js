@@ -17,6 +17,28 @@ export let teamGames = {}; // Team -> [{opponent, result}]
 export let teamRecords = {}; // Team -> {wins, losses, ties, winPct}
 export let strengthRecords = {}; // Team -> {sov, sos}
 
+export function snapshotTiebreakRecords() {
+    return {
+        conferenceRecords,
+        divisionRecords,
+        commonGamesRecords,
+        headToHeadRecords,
+        teamGames,
+        teamRecords,
+        strengthRecords
+    };
+}
+
+export function setTiebreakRecords(records) {
+    conferenceRecords = records?.conferenceRecords || {};
+    divisionRecords = records?.divisionRecords || {};
+    commonGamesRecords = records?.commonGamesRecords || {};
+    headToHeadRecords = records?.headToHeadRecords || {};
+    teamGames = records?.teamGames || {};
+    teamRecords = records?.teamRecords || {};
+    strengthRecords = records?.strengthRecords || {};
+}
+
 // ========================================
 // DATA FETCHING
 // ========================================
@@ -51,45 +73,8 @@ export async function fetchTiebreakRecords() {
 }
 
 function buildTeamGameData(games) {
-    teamGames = {};
-    teamRecords = {};
-    strengthRecords = {};
-    if (!Array.isArray(games)) return;
-
-    games.forEach(game => {
-        const away = game.away_abbr;
-        const home = game.home_abbr;
-        if (!away || !home) return;
-
-        ensureTeamRecord(away);
-        ensureTeamRecord(home);
-        ensureTeamGames(away);
-        ensureTeamGames(home);
-
-        const winner = getWinnerAbbrFromGame(game);
-        if (winner === away) {
-            teamRecords[away].wins += 1;
-            teamRecords[home].losses += 1;
-            teamGames[away].push({ opponent: home, result: 'win' });
-            teamGames[home].push({ opponent: away, result: 'loss' });
-        } else if (winner === home) {
-            teamRecords[home].wins += 1;
-            teamRecords[away].losses += 1;
-            teamGames[home].push({ opponent: away, result: 'win' });
-            teamGames[away].push({ opponent: home, result: 'loss' });
-        } else {
-            teamRecords[away].ties += 1;
-            teamRecords[home].ties += 1;
-            teamGames[away].push({ opponent: home, result: 'tie' });
-            teamGames[home].push({ opponent: away, result: 'tie' });
-        }
-    });
-
-    Object.values(teamRecords).forEach(rec => {
-        rec.winPct = calculateWinPct(rec.wins, rec.losses, rec.ties);
-    });
-
-    buildStrengthRecords(games);
+    const records = buildTiebreakRecordsFromGames(games);
+    setTiebreakRecords(records);
 }
 
 function ensureTeamRecord(teamAbbr) {
@@ -105,17 +90,37 @@ function ensureTeamGames(teamAbbr) {
 }
 
 function getWinnerAbbrFromGame(game) {
-    const awayScore = Number.isFinite(game.away_score) ? game.away_score : null;
-    const homeScore = Number.isFinite(game.home_score) ? game.home_score : null;
-    if (awayScore === null || homeScore === null) return null;
-    if (awayScore > homeScore) return game.away_abbr;
-    if (homeScore > awayScore) return game.home_abbr;
+    const result = getGameResult(game);
+    if (result === 'away') return getTeamAbbr(game, 'away');
+    if (result === 'home') return getTeamAbbr(game, 'home');
     return null;
 }
 
-function buildStrengthRecords(games) {
+function getTeamAbbr(game, side) {
+    if (side === 'away') {
+        return game.away_abbr || game.awayTeam?.abbr || game.awayTeam?.id || null;
+    }
+    return game.home_abbr || game.homeTeam?.abbr || game.homeTeam?.id || null;
+}
+
+function getGameResult(game) {
+    if (game?.result === 'home' || game?.result === 'away' || game?.result === 'tie') {
+        return game.result;
+    }
+    const awayScore = Number.isFinite(game.away_score) ? game.away_score
+        : (Number.isFinite(game.awayScore) ? game.awayScore : null);
+    const homeScore = Number.isFinite(game.home_score) ? game.home_score
+        : (Number.isFinite(game.homeScore) ? game.homeScore : null);
+    if (awayScore === null || homeScore === null) return null;
+    if (awayScore > homeScore) return 'away';
+    if (homeScore > awayScore) return 'home';
+    return 'tie';
+}
+
+function buildStrengthRecords(games, teamRecordsOverride) {
+    const workingTeamRecords = teamRecordsOverride || teamRecords;
     const sums = {};
-    Object.keys(teamRecords).forEach(team => {
+    Object.keys(workingTeamRecords).forEach(team => {
         sums[team] = {
             sovWins: 0, sovLosses: 0, sovTies: 0,
             sosWins: 0, sosLosses: 0, sosTies: 0
@@ -123,11 +128,11 @@ function buildStrengthRecords(games) {
     });
 
     games.forEach(game => {
-        const away = game.away_abbr;
-        const home = game.home_abbr;
+        const away = getTeamAbbr(game, 'away');
+        const home = getTeamAbbr(game, 'home');
         if (!away || !home) return;
-        const awayRec = teamRecords[away];
-        const homeRec = teamRecords[home];
+        const awayRec = workingTeamRecords[away];
+        const homeRec = workingTeamRecords[home];
         if (!awayRec || !homeRec) return;
 
         addOpponentRecord(sums[away], homeRec, 'sos');
@@ -141,12 +146,205 @@ function buildStrengthRecords(games) {
         }
     });
 
-    strengthRecords = {};
+    const result = {};
     Object.entries(sums).forEach(([team, rec]) => {
         const sov = calculateWinPct(rec.sovWins, rec.sovLosses, rec.sovTies);
         const sos = calculateWinPct(rec.sosWins, rec.sosLosses, rec.sosTies);
-        strengthRecords[team] = { sov, sos };
+        result[team] = { sov, sos };
     });
+    return result;
+}
+
+export function buildTiebreakRecordsFromGames(games) {
+    const records = {
+        conferenceRecords: {},
+        divisionRecords: {},
+        commonGamesRecords: {},
+        headToHeadRecords: {},
+        teamGames: {},
+        teamRecords: {},
+        strengthRecords: {}
+    };
+
+    if (!Array.isArray(games)) {
+        return records;
+    }
+
+    const ensureRecord = (map, team, opponent = null) => {
+        if (!map[team]) {
+            map[team] = {
+                team,
+                opponent,
+                wins: 0,
+                losses: 0,
+                ties: 0,
+                winPct: 0
+            };
+        }
+    };
+
+    const ensureTeamRecord = team => {
+        if (!records.teamRecords[team]) {
+            records.teamRecords[team] = { wins: 0, losses: 0, ties: 0, winPct: 0 };
+        }
+    };
+
+    const ensureTeamGames = team => {
+        if (!records.teamGames[team]) {
+            records.teamGames[team] = [];
+        }
+    };
+
+    const applyResult = (rec, result) => {
+        if (result === 'win') rec.wins += 1;
+        else if (result === 'loss') rec.losses += 1;
+        else rec.ties += 1;
+    };
+
+    const updateHeadToHead = (team, opponent, result) => {
+        const key = `${team}_vs_${opponent}`;
+        if (!records.headToHeadRecords[key]) {
+            records.headToHeadRecords[key] = { team, opponent, wins: 0, losses: 0, ties: 0, winPct: 0 };
+        }
+        applyResult(records.headToHeadRecords[key], result);
+    };
+
+    games.forEach(game => {
+        const away = getTeamAbbr(game, 'away');
+        const home = getTeamAbbr(game, 'home');
+        if (!away || !home) return;
+
+        const result = getGameResult(game);
+        if (!result) return;
+
+        ensureTeamRecord(away);
+        ensureTeamRecord(home);
+        ensureTeamGames(away);
+        ensureTeamGames(home);
+
+        if (result === 'away') {
+            applyResult(records.teamRecords[away], 'win');
+            applyResult(records.teamRecords[home], 'loss');
+            records.teamGames[away].push({ opponent: home, result: 'win' });
+            records.teamGames[home].push({ opponent: away, result: 'loss' });
+            updateHeadToHead(away, home, 'win');
+            updateHeadToHead(home, away, 'loss');
+        } else if (result === 'home') {
+            applyResult(records.teamRecords[home], 'win');
+            applyResult(records.teamRecords[away], 'loss');
+            records.teamGames[home].push({ opponent: away, result: 'win' });
+            records.teamGames[away].push({ opponent: home, result: 'loss' });
+            updateHeadToHead(home, away, 'win');
+            updateHeadToHead(away, home, 'loss');
+        } else {
+            applyResult(records.teamRecords[home], 'tie');
+            applyResult(records.teamRecords[away], 'tie');
+            records.teamGames[home].push({ opponent: away, result: 'tie' });
+            records.teamGames[away].push({ opponent: home, result: 'tie' });
+            updateHeadToHead(home, away, 'tie');
+            updateHeadToHead(away, home, 'tie');
+        }
+
+        const awayConf = getConference(away);
+        const homeConf = getConference(home);
+        if (awayConf && homeConf && awayConf === homeConf) {
+            ensureRecord(records.conferenceRecords, away);
+            ensureRecord(records.conferenceRecords, home);
+            if (result === 'away') {
+                applyResult(records.conferenceRecords[away], 'win');
+                applyResult(records.conferenceRecords[home], 'loss');
+            } else if (result === 'home') {
+                applyResult(records.conferenceRecords[home], 'win');
+                applyResult(records.conferenceRecords[away], 'loss');
+            } else {
+                applyResult(records.conferenceRecords[home], 'tie');
+                applyResult(records.conferenceRecords[away], 'tie');
+            }
+        }
+
+        const awayDiv = getDivision(away);
+        const homeDiv = getDivision(home);
+        if (awayDiv && homeDiv && awayDiv === homeDiv) {
+            ensureRecord(records.divisionRecords, away);
+            ensureRecord(records.divisionRecords, home);
+            if (result === 'away') {
+                applyResult(records.divisionRecords[away], 'win');
+                applyResult(records.divisionRecords[home], 'loss');
+            } else if (result === 'home') {
+                applyResult(records.divisionRecords[home], 'win');
+                applyResult(records.divisionRecords[away], 'loss');
+            } else {
+                applyResult(records.divisionRecords[home], 'tie');
+                applyResult(records.divisionRecords[away], 'tie');
+            }
+        }
+    });
+
+    Object.values(records.teamRecords).forEach(rec => {
+        rec.winPct = calculateWinPct(rec.wins, rec.losses, rec.ties);
+    });
+    Object.values(records.conferenceRecords).forEach(rec => {
+        rec.winPct = calculateWinPct(rec.wins, rec.losses, rec.ties);
+    });
+    Object.values(records.divisionRecords).forEach(rec => {
+        rec.winPct = calculateWinPct(rec.wins, rec.losses, rec.ties);
+    });
+    Object.values(records.headToHeadRecords).forEach(rec => {
+        rec.winPct = calculateWinPct(rec.wins, rec.losses, rec.ties);
+    });
+
+    records.strengthRecords = buildStrengthRecords(games, records.teamRecords);
+    records.commonGamesRecords = buildCommonGamesRecords(records.teamGames);
+
+    return records;
+}
+
+function buildCommonGamesRecords(teamGamesData) {
+    const commonRecords = {};
+    const teams = Object.keys(teamGamesData);
+    const opponentSets = new Map();
+
+    teams.forEach(team => {
+        const opponents = new Set();
+        (teamGamesData[team] || []).forEach(game => {
+            opponents.add(game.opponent);
+        });
+        opponentSets.set(team, opponents);
+    });
+
+    teams.forEach(team => {
+        const games = teamGamesData[team] || [];
+        teams.forEach(opponent => {
+            if (team === opponent) return;
+            const commonOpponents = new Set();
+            const teamOpponents = opponentSets.get(team) || new Set();
+            const oppOpponents = opponentSets.get(opponent) || new Set();
+            teamOpponents.forEach(opp => {
+                if (oppOpponents.has(opp)) commonOpponents.add(opp);
+            });
+
+            let wins = 0;
+            let losses = 0;
+            let ties = 0;
+            games.forEach(game => {
+                if (!commonOpponents.has(game.opponent)) return;
+                if (game.result === 'win') wins += 1;
+                else if (game.result === 'loss') losses += 1;
+                else ties += 1;
+            });
+            const total = wins + losses + ties;
+            commonRecords[`${team}_vs_${opponent}`] = {
+                team,
+                opponent,
+                wins,
+                losses,
+                ties,
+                winPct: total > 0 ? calculateWinPct(wins, losses, ties) : 0
+            };
+        });
+    });
+
+    return commonRecords;
 }
 
 function addOpponentRecord(target, opponentRec, type) {

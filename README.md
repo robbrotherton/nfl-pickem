@@ -141,6 +141,7 @@ When you make changes or pull updates from GitHub:
 
 ```bash
 cd ~/nfl-pickem
+cp nfl-pickem.db nfl-pickem-backup-$(date +%Y%m%d).db # backup db
 git pull                # Get latest changes
 npm install             # Update dependencies if needed
 pm2 restart nfl-pickem  # Restart the server

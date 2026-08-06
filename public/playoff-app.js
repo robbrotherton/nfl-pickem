@@ -1,33 +1,31 @@
 // app.js
 // Main application coordinator - brings all modules together
 
-import { DEFAULT_TARGET_TEAM } from './modules/constants.js';
+import { DEFAULT_TARGET_TEAM, getConference, getDivision } from './modules/constants.js';
 import {
     setTargetTeam,
     setAllStandings,
     setAllGames,
     setCriticalGames,
-    setCurrentBestCase,
-    setCurrentWorstCase
+    getCurrentWeek,
+    setAsOfWeek
 } from './modules/state.js';
 import { fetchDbSeasonData } from './modules/api.js';
-import { fetchTiebreakRecords } from './modules/tiebreakers.js';
+import { buildTiebreakRecordsFromGames, setTiebreakRecords } from './modules/tiebreakers.js';
 import { identifyCriticalGames } from './modules/playoff-calculator.js';
 import {
     runMonteCarloSimulation,
-    findBestCaseScenario,
-    findWorstCaseScenario
 } from './modules/simulation.js';
 import {
     renderApp,
-    renderKeyGames,
     updatePlayoffChancesDisplay,
     setOutcomeHandler,
     selectTeamHandler,
-    applyBestCaseHandler,
-    applyWorstCaseHandler,
     setupGlobalEventDelegation
 } from './modules/ui.js';
+
+let baseAllGames = [];
+let baseTeams = [];
 
 // ========================================
 // INITIALIZATION
@@ -39,11 +37,11 @@ import {
 async function initializeApp() {
     try {
         // Fetch data from DB only
-        const { standings, remainingGames } = await fetchDbSeasonData();
-        setAllStandings(standings);
-        setAllGames(remainingGames);
-        
-        await fetchTiebreakRecords();
+        const { standings, allGames, currentWeek } = await fetchDbSeasonData();
+        baseAllGames = Array.isArray(allGames) ? allGames : [];
+        baseTeams = buildBaseTeams(baseAllGames, standings);
+
+        applyAsOfWeek(currentWeek || 1);
         
         // Identify critical games
         const critical = identifyCriticalGames();
@@ -53,8 +51,8 @@ async function initializeApp() {
         setupGlobalEventDelegation({
             onSetOutcome: (gameId, outcome) => setOutcomeHandler(gameId, outcome, calculateAndDisplayScenarios),
             onSelectTeam: (teamAbbr) => selectTeamHandler(teamAbbr, identifyCriticalGamesHandler, calculateAndDisplayScenarios, renderAppHandler),
-            onApplyBestCase: () => applyBestCaseHandler(getBestCase(), calculateAndDisplayScenarios),
-            onApplyWorstCase: () => applyWorstCaseHandler(getWorstCase(), calculateAndDisplayScenarios)
+            onApplyBestCase: bestWorstDisabled,
+            onApplyWorstCase: bestWorstDisabled
         });
         
         // Render the UI
@@ -87,25 +85,104 @@ function identifyCriticalGamesHandler() {
     setCriticalGames(critical);
 }
 
+function handleAsOfWeekChange(week) {
+    applyAsOfWeek(week);
+    identifyCriticalGamesHandler();
+    renderAppHandler();
+    calculateAndDisplayScenarios();
+}
+
 /**
  * Render app wrapper (wrapper for callbacks)
  */
 function renderAppHandler() {
-    renderApp(calculateAndDisplayScenarios);
+    renderApp(calculateAndDisplayScenarios, handleAsOfWeekChange);
 }
 
 /**
  * Get current best case from state
  */
-let currentBestCase = null;
-let currentWorstCase = null;
+const bestWorstDisabled = () => null;
 
-function getBestCase() {
-    return currentBestCase;
+function applyAsOfWeek(week) {
+    const currentWeek = getCurrentWeek() || 1;
+    const nextWeek = Math.min(Math.max(1, week || 1), currentWeek);
+    setAsOfWeek(nextWeek);
+
+    const normalizedGames = normalizeGamesForWeek(baseAllGames, nextWeek);
+    setAllGames(normalizedGames);
+
+    const finalGames = normalizedGames.filter(game => game.status === 'final');
+    const tiebreakRecords = buildTiebreakRecordsFromGames(finalGames);
+    setTiebreakRecords(tiebreakRecords);
+
+    const standings = buildStandingsFromRecords(baseTeams, tiebreakRecords.teamRecords);
+    setAllStandings(standings);
 }
 
-function getWorstCase() {
-    return currentWorstCase;
+function normalizeGamesForWeek(games, asOfWeek) {
+    if (!Array.isArray(games)) return [];
+    return games.map(game => {
+        if (!Number.isInteger(game.week)) return game;
+        if (game.status !== 'final') return game;
+        if (game.week <= asOfWeek) return game;
+        return { ...game, status: 'scheduled' };
+    });
+}
+
+function buildBaseTeams(games, standings) {
+    const standingsMap = new Map((standings || []).map(team => [team.abbr, team]));
+    const teamMap = new Map();
+
+    const addTeam = (team) => {
+        if (!team?.abbr) return;
+        if (teamMap.has(team.abbr)) return;
+
+        const existing = standingsMap.get(team.abbr);
+        const division = existing?.division || getDivision(team.abbr) || 'Unknown';
+        const conference = existing?.conference || getConference(team.abbr) || (division.startsWith('NFC') ? 'NFC' : 'AFC');
+        teamMap.set(team.abbr, {
+            id: team.abbr,
+            abbr: team.abbr,
+            name: existing?.name || team.name || team.abbr,
+            logo: existing?.logo || team.logo || '',
+            division,
+            conference
+        });
+    };
+
+    (games || []).forEach(game => {
+        addTeam(game.homeTeam);
+        addTeam(game.awayTeam);
+    });
+
+    (standings || []).forEach(team => addTeam(team));
+
+    return Array.from(teamMap.values());
+}
+
+function buildStandingsFromRecords(baseTeamsList, teamRecords) {
+    const records = teamRecords || {};
+    const standings = (baseTeamsList || []).map(team => {
+        const record = records[team.abbr] || { wins: 0, losses: 0, ties: 0 };
+        const total = record.wins + record.losses + record.ties;
+        const winPct = total > 0 ? (record.wins + 0.5 * record.ties) / total : 0;
+        return {
+            ...team,
+            wins: record.wins,
+            losses: record.losses,
+            ties: record.ties,
+            winPct,
+            tiebreakReason: null
+        };
+    });
+
+    standings.sort((a, b) => {
+        if (b.winPct !== a.winPct) return b.winPct - a.winPct;
+        return 0;
+    });
+
+    return standings;
 }
 
 // ========================================
@@ -119,23 +196,14 @@ function calculateAndDisplayScenarios() {
     // Run Monte Carlo simulation
     const monteCarloResults = runMonteCarloSimulation();
     
-    // Find best and worst case scenarios
-    const bestCase = findBestCaseScenario();
-    const worstCase = findWorstCaseScenario();
-    
-    // Store globally for UI callbacks
-    currentBestCase = bestCase;
-    currentWorstCase = worstCase;
-    setCurrentBestCase(bestCase);
-    setCurrentWorstCase(worstCase);
-    
-    // Update display
+    // Update display (best/worst are disabled for now)
     updatePlayoffChancesDisplay(
         monteCarloResults.playoffProbability,
         monteCarloResults.targetPlayoffCount,
         monteCarloResults.totalIterations,
-        bestCase,
-        worstCase
+        monteCarloResults.bestResult ? { result: monteCarloResults.bestResult, source: 'monteCarlo' } : null,
+        monteCarloResults.worstResult ? { result: monteCarloResults.worstResult, source: 'monteCarlo' } : null,
+        monteCarloResults.seedCounts
     );
 }
 

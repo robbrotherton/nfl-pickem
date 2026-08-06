@@ -2,19 +2,42 @@
 // UI prototype for NFL Postseason Predictor
 
 
-import { getCurrentSeason, getCurrentWeek, getAllStandings, setAllStandings, setCurrentSeason, setAllGames } from './modules/state.js';
+import { getCurrentSeason, getCurrentWeek, getAllStandings, setAllStandings, setAllGames } from './modules/state.js';
 import { HOME_FIELD_ADVANTAGE, DIVISION_MAP } from './modules/constants.js';
-import { fetchStandings } from './modules/api.js';
+import { fetchDbSeasonData } from './modules/api.js';
 import { calculatePlayoffTeams } from './modules/playoff-calculator.js';
 
 
 
-function buildBracketData(wildcardGames) {
-    // Group by conference (not used yet, but could be useful)
+function buildBracketData(wildcardGames, teams) {
+    // Assign seeds and conferences to each game using the teams array
+    const teamMap = {};
+    teams.forEach(t => {
+        teamMap[t.abbr] = { seed: t.seed, conference: t.conference };
+    });
+    const gamesWithSeeds = wildcardGames.map(g => ({
+        ...g,
+        home_seed: teamMap[g.home_abbr]?.seed,
+        away_seed: teamMap[g.away_abbr]?.seed,
+        home_conference: teamMap[g.home_abbr]?.conference,
+        away_conference: teamMap[g.away_abbr]?.conference
+    }));
+    // Separate by conference
+    const nfcGames = gamesWithSeeds.filter(g => g.home_conference === 'NFC' || g.away_conference === 'NFC');
+    const afcGames = gamesWithSeeds.filter(g => g.home_conference === 'AFC' || g.away_conference === 'AFC');
+    // Order by lower seed (should be 2v7, 3v6, 4v5)
+    function orderGamesBySeed(games) {
+        return [2,3,4].map(seed =>
+            games.find(g => (g.home_seed === seed && g.away_seed === 7-seed+2) || (g.away_seed === seed && g.home_seed === 7-seed+2))
+        ).filter(Boolean);
+    }
+    const orderedNfc = orderGamesBySeed(nfcGames);
+    const orderedAfc = orderGamesBySeed(afcGames);
+    const orderedGames = [...orderedNfc, ...orderedAfc];
     return [
         {
             round: 'Wild Card',
-            games: wildcardGames
+            games: orderedGames
         },
         { round: 'Divisional', games: [null, null, null, null] },
         { round: 'Conference', games: [null, null] },
@@ -182,16 +205,12 @@ function setupResetButton(bracket) {
 async function main() {
     // Auto-detect the latest season with games in the DB
     try {
-        // 1. Fetch current season/week info (from ESPN, like playoff tree page)
-        const api = await import('./modules/api.js');
-        await api.fetchCurrentSeasonInfo();
-
-        // 2. Fetch ESPN-style standings (weeks 1-18, with clincher status, etc.)
-        const standings = await api.fetchStandings();
+        // 1. Fetch standings from DB (regular season only)
+        const { standings } = await fetchDbSeasonData();
         setAllStandings(standings);
 
         // 3. Fetch scheduled playoff games from DB (still from your DB)
-        const season = standings[0]?.season || (await (await fetch('/api/seasons')).json())[0];
+        const season = getCurrentSeason() || (await (await fetch('/api/seasons')).json())[0];
         const week = 1; // Wild Card round
         const games = await fetchPlayoffGames(season, week);
         console.log('[Postseason] Fetched games:', games);
@@ -232,9 +251,163 @@ async function main() {
         }
         nfcPlayoffTeams = nfcPlayoffTeams.slice(0, 7);
         afcPlayoffTeams = afcPlayoffTeams.slice(0, 7);
-        const teams = [...nfcPlayoffTeams, ...afcPlayoffTeams];
+        // Add winPct to each team (already present from standings, but ensure it's there)
+        const teams = [...nfcPlayoffTeams, ...afcPlayoffTeams].map(t => ({
+            ...t,
+            winPct: typeof t.winPct === 'number' ? t.winPct : 0
+        }));
+                // Function to compute matchup probability based on two teams' winPct
+                function getRecordBasedProb(home, away) {
+                    const homeWinPct = home.winPct ?? 0.5;
+                    const awayWinPct = away.winPct ?? 0.5;
+                    const total = homeWinPct + awayWinPct;
+                    if (total === 0) return 0.5;
+                    return homeWinPct / total;
+                }
         let selectedAbbr = teams.length ? teams[0].abbr : null;
-        const bracket = buildBracketData(games);
+        const bracket = buildBracketData(games, teams);
+        // --- Simulation UI ---
+        let simResultsContainer = document.getElementById('simResultsContainer');
+        if (!simResultsContainer) {
+            simResultsContainer = document.createElement('div');
+            simResultsContainer.id = 'simResultsContainer';
+            simResultsContainer.style.margin = '32px 0';
+            document.body.appendChild(simResultsContainer);
+        }
+        let simButton = document.getElementById('runSimButton');
+        if (!simButton) {
+            simButton = document.createElement('button');
+            simButton.id = 'runSimButton';
+            simButton.textContent = 'Run Playoff Simulator';
+            simButton.style.margin = '24px auto 12px auto';
+            simButton.style.display = 'block';
+            document.body.appendChild(simButton);
+        }
+
+
+        // --- Patch: Use userProbability (slider value) for each matchup in the sim ---
+        // Build a lookup for user-set probabilities from the bracket
+        function buildUserProbMap(bracket, teams) {
+            const probMap = {};
+            // Build a lookup for team seeds and conferences
+            const seedMap = {};
+            const confMap = {};
+            for (const t of teams) {
+                seedMap[t.abbr] = t.seed;
+                confMap[t.abbr] = t.conference;
+            }
+            for (const round of bracket) {
+                for (const game of round.games) {
+                    if (game && game.home_abbr && game.away_abbr && typeof game.userProbability === 'number') {
+                        const homeSeed = seedMap[game.home_abbr];
+                        const awaySeed = seedMap[game.away_abbr];
+                        const homeConf = confMap[game.home_abbr];
+                        const awayConf = confMap[game.away_abbr];
+                        // Use the conference of the lower seed (should always be the same for wild card)
+                        const conf = homeSeed < awaySeed ? homeConf : awayConf;
+                        if (typeof homeSeed === 'number' && typeof awaySeed === 'number' && conf) {
+                            const highSeed = homeSeed < awaySeed ? game.home_abbr : game.away_abbr;
+                            const lowSeed = homeSeed < awaySeed ? game.away_abbr : game.home_abbr;
+                            const highSeedNum = homeSeed < awaySeed ? homeSeed : awaySeed;
+                            const lowSeedNum = homeSeed < awaySeed ? awaySeed : homeSeed;
+                            const prob = homeSeed < awaySeed ? (game.userProbability / 100) : (1 - game.userProbability / 100);
+                            const key = `${conf}_${highSeedNum}_${lowSeedNum}`;
+                            probMap[key] = prob;
+                            console.log('[Sim][buildUserProbMap] Game:', {
+                                home_abbr: game.home_abbr,
+                                away_abbr: game.away_abbr,
+                                homeSeed,
+                                awaySeed,
+                                userProbability: game.userProbability,
+                                highSeed,
+                                lowSeed,
+                                highSeedNum,
+                                lowSeedNum,
+                                conf,
+                                prob,
+                                key
+                            });
+                        }
+                    }
+                }
+            }
+            console.log('[Sim][buildUserProbMap] Final probMap:', probMap);
+            return probMap;
+        }
+
+        async function runSimulation() {
+            simButton.disabled = true;
+            simButton.textContent = 'Simulating...';
+            simResultsContainer.innerHTML = '';
+            const [sim, table] = await Promise.all([
+                import('./modules/playoff-simulator.js'),
+                import('./modules/playoff-results-table.js')
+            ]);
+            // Build user probability map from current bracket
+            const userProbMap = buildUserProbMap(bracket, teams);
+            // getGameProb uses userProbability based on seed order, else falls back to winPct
+            const seedMap = {};
+            const confMap = {};
+            for (const t of teams) {
+                seedMap[t.abbr] = t.seed;
+                confMap[t.abbr] = t.conference;
+            }
+            function getGameProb(home, away) {
+                const homeSeed = seedMap[home.abbr];
+                const awaySeed = seedMap[away.abbr];
+                const homeConf = confMap[home.abbr];
+                const awayConf = confMap[away.abbr];
+                // Use the conference of the lower seed (should always be the same for wild card)
+                const conf = homeSeed < awaySeed ? homeConf : awayConf;
+                if (typeof homeSeed === 'number' && typeof awaySeed === 'number' && conf) {
+                    const highSeed = homeSeed < awaySeed ? home.abbr : away.abbr;
+                    const lowSeed = homeSeed < awaySeed ? away.abbr : home.abbr;
+                    const highSeedNum = homeSeed < awaySeed ? homeSeed : awaySeed;
+                    const lowSeedNum = homeSeed < awaySeed ? awaySeed : homeSeed;
+                    const key = `${conf}_${highSeedNum}_${lowSeedNum}`;
+                    if (userProbMap.hasOwnProperty(key)) {
+                        // Always return probability for higher seed as home
+                        const prob = highSeed === home.abbr ? userProbMap[key] : 1 - userProbMap[key];
+                        console.log('[Sim][getGameProb] Matchup:', {
+                            home: home.abbr,
+                            away: away.abbr,
+                            homeSeed,
+                            awaySeed,
+                            highSeed,
+                            lowSeed,
+                            highSeedNum,
+                            lowSeedNum,
+                            conf,
+                            key,
+                            userProb: userProbMap[key],
+                            returnedProb: prob
+                        });
+                        return prob;
+                    } else {
+                        console.log('[Sim][getGameProb] No userProb for', key, 'Matchup:', {
+                            home: home.abbr,
+                            away: away.abbr,
+                            homeSeed,
+                            awaySeed,
+                            conf
+                        });
+                    }
+                }
+                // Fallback: winPct-based
+                const homeWinPct = home.winPct ?? 0.5;
+                const awayWinPct = away.winPct ?? 0.5;
+                const totalWeight = homeWinPct + awayWinPct;
+                let homeProb = totalWeight > 0 ? (homeWinPct / totalWeight) + HOME_FIELD_ADVANTAGE : 0.5 + HOME_FIELD_ADVANTAGE;
+                console.log('[Sim][getGameProb] Fallback winPct for', home.abbr, 'vs', away.abbr, ':', homeProb);
+                return Math.max(0, Math.min(1, homeProb));
+            }
+            const { teamStats } = sim.runPlayoffSimulations(teams, getGameProb, 10000);
+            table.renderPlayoffResultsTable(teams, teamStats, simResultsContainer);
+            simButton.disabled = false;
+            simButton.textContent = 'Run Playoff Simulator';
+        }
+        simButton.onclick = runSimulation;
+
         function rerender() {
             renderBracket(bracket, teams, selectedAbbr, abbr => {
                 selectedAbbr = abbr;

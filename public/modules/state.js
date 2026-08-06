@@ -8,6 +8,7 @@
 let _targetTeam = 'CHI';
 let _currentSeason = null;
 let _currentWeek = null;
+let _asOfWeek = null;
 let _allStandings = [];
 let _allGames = [];
 let _criticalGames = [];
@@ -30,6 +31,10 @@ export function getCurrentSeason() {
 
 export function getCurrentWeek() {
     return _currentWeek;
+}
+
+export function getAsOfWeek() {
+    return _asOfWeek ?? _currentWeek;
 }
 
 export function getAllStandings() {
@@ -78,6 +83,10 @@ export function setCurrentSeason(season) {
 
 export function setCurrentWeek(week) {
     _currentWeek = week;
+}
+
+export function setAsOfWeek(week) {
+    _asOfWeek = week;
 }
 
 export function setAllStandings(standings) {

@@ -7,6 +7,7 @@ import {
     getCriticalGames,
     getUserOutcomes,
     getCurrentWeek,
+    getAsOfWeek,
     setTargetTeam,
     setUserOutcomes,
     setUserOutcome,
@@ -26,18 +27,41 @@ import { REGULAR_SEASON_WEEKS } from './constants.js';
 /**
  * Render the main app structure
  */
-export function renderApp(onCalculateScenarios) {
+export function renderApp(onCalculateScenarios, onAsOfWeekChange) {
     const targetTeam = getTargetTeamData();
     const currentWeek = getCurrentWeek();
+    const asOfWeek = getAsOfWeek() ?? currentWeek ?? 1;
     const criticalGames = getCriticalGames();
     const teamName = targetTeam ? targetTeam.name : 'Team';
     const teamDivision = targetTeam ? targetTeam.division : '';
     const teamNameWithDivision = targetTeam ? `${teamName} (${teamDivision})` : 'Team';
     
+    const remainingWeeks = Math.max(0, REGULAR_SEASON_WEEKS - (asOfWeek || 0));
+    const weekLabel = currentWeek && asOfWeek && currentWeek !== asOfWeek
+        ? `Week ${asOfWeek} Standings (current week ${currentWeek})`
+        : `Week ${asOfWeek} Standings`;
+
+    const weekOptions = [];
+    for (let week = 1; week <= REGULAR_SEASON_WEEKS; week++) {
+        const isDisabled = currentWeek && week > currentWeek;
+        const isSelected = week === asOfWeek;
+        const label = currentWeek && week === currentWeek ? `Week ${week} (current)` : `Week ${week}`;
+        weekOptions.push(
+            `<option value="${week}" ${isSelected ? 'selected' : ''} ${isDisabled ? 'disabled' : ''}>${label}</option>`
+        );
+    }
+
     document.getElementById('app').innerHTML = `
-        <h2 style="text-align: center; margin: 30px 0 20px 0; font-size: 1.5em;">
-            Week ${currentWeek} Standings (${REGULAR_SEASON_WEEKS - currentWeek} regular season games remaining)
+        <h2 style="text-align: center; margin: 30px 0 10px 0; font-size: 1.5em;">
+            ${weekLabel} (${remainingWeeks} regular season weeks remaining)
         </h2>
+        <div class="time-travel-bar">
+            <label for="asOfWeekSelect">View standings as of</label>
+            <select id="asOfWeekSelect" aria-label="View standings as of week">
+                ${weekOptions.join('')}
+            </select>
+            <span class="time-travel-current">Current week: ${currentWeek || asOfWeek}</span>
+        </div>
         
         <div class="main-grid">
             <div class="card">
@@ -59,6 +83,14 @@ export function renderApp(onCalculateScenarios) {
                 <h2 class="team-header">${teamNameWithDivision} Playoff Chances</h2>
                 <div class="playoff-percentage" id="playoffPercentage">---%</div>
                 <div class="playoff-status collapsible-content" id="playoffStatus">Calculating scenarios...</div>
+                <div class="seed-breakdown collapsible-content">
+                    <span>Seed distribution</span>
+                    <span class="tiebreak-info seed-info" id="seedDistributionInfo" data-tooltip="Seed distribution">ⓘ</span>
+                    <button class="seed-toggle" id="seedDistributionToggle" type="button" aria-expanded="false" aria-controls="seedDistributionChart">
+                        Show graph
+                    </button>
+                </div>
+                <div class="seed-chart collapsible-content" id="seedDistributionChart"></div>
                 <div class="collapsible-content" style="margin-top: 15px; display: flex; gap: 10px; justify-content: center; align-items: center;">
                     <button id="weightedModeBtn" class="sim-mode-btn active" title="Weighted by team records">
                         ⚖️
@@ -96,13 +128,13 @@ export function renderApp(onCalculateScenarios) {
     renderKeyGames();
     
     // Set up event handlers
-    setupEventHandlers(onCalculateScenarios);
+    setupEventHandlers(onCalculateScenarios, onAsOfWeekChange);
 }
 
 /**
  * Set up all UI event handlers
  */
-function setupEventHandlers(onCalculateScenarios) {
+function setupEventHandlers(onCalculateScenarios, onAsOfWeekChange) {
     // Simulation mode buttons
     document.getElementById('weightedModeBtn').addEventListener('click', () => {
         toggleSimulationMode(true, onCalculateScenarios);
@@ -120,6 +152,27 @@ function setupEventHandlers(onCalculateScenarios) {
     document.querySelector('.playoff-chances-toggle').addEventListener('click', () => {
         document.querySelector('.playoff-chances').classList.toggle('collapsed');
     });
+
+    const asOfSelect = document.getElementById('asOfWeekSelect');
+    if (asOfSelect && onAsOfWeekChange) {
+        asOfSelect.addEventListener('change', (event) => {
+            const nextWeek = parseInt(event.target.value, 10);
+            if (Number.isInteger(nextWeek)) {
+                onAsOfWeekChange(nextWeek);
+            }
+        });
+    }
+
+    const seedToggle = document.getElementById('seedDistributionToggle');
+    if (seedToggle) {
+        seedToggle.addEventListener('click', () => {
+            const chart = document.getElementById('seedDistributionChart');
+            if (!chart) return;
+            const isOpen = chart.classList.toggle('is-open');
+            seedToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+            seedToggle.textContent = isOpen ? 'Hide graph' : 'Show graph';
+        });
+    }
 }
 
 // ========================================
@@ -334,16 +387,83 @@ export function renderKeyGames() {
 /**
  * Update the playoff chances display
  */
-export function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCase) {
+export function updatePlayoffChancesDisplay(probability, made, total, bestCase, worstCase, seedCounts) {
     const targetAbbr = getTargetTeam();
     const allStandings = getAllStandings();
     
     document.getElementById('playoffPercentage').textContent = `${Math.round(probability)}%`;
     document.getElementById('playoffStatus').textContent = 
         `Made playoffs in ${made} of ${total} simulated scenarios`;
+
+    const seedInfo = document.getElementById('seedDistributionInfo');
+    const seedChart = document.getElementById('seedDistributionChart');
+    const seedToggle = document.getElementById('seedDistributionToggle');
+    if (seedInfo && seedCounts) {
+        const lines = [`Seed distribution (${total} sims)`];
+        const chartRows = [];
+        for (let seed = 1; seed <= 7; seed++) {
+            const count = seedCounts[seed] || 0;
+            if (count > 0) {
+                lines.push(`#${seed}: ${count}`);
+            }
+            const pct = total > 0 ? (count / total) * 100 : 0;
+            chartRows.push({
+                label: `#${seed}`,
+                count,
+                pct,
+                className: ''
+            });
+        }
+        const missed = Math.max(0, total - made);
+        if (missed > 0) lines.push(`Missed playoffs: ${missed}`);
+        const missedPct = total > 0 ? (missed / total) * 100 : 0;
+        chartRows.push({
+            label: 'Miss',
+            count: missed,
+            pct: missedPct,
+            className: 'missed'
+        });
+        seedInfo.dataset.tooltip = lines.join('\n');
+        seedInfo.style.display = 'inline-flex';
+
+        if (seedChart) {
+            seedChart.innerHTML = chartRows.map(row => `
+                <div class="seed-chart-row ${row.className}">
+                    <span class="seed-label">${row.label}</span>
+                    <div class="seed-bar"><span style="width: ${Math.min(100, row.pct)}%"></span></div>
+                    <span class="seed-count">${row.pct.toFixed(1)}%</span>
+                </div>
+            `).join('');
+        }
+
+        if (seedToggle) {
+            seedToggle.disabled = false;
+            seedToggle.style.display = 'inline-flex';
+        }
+    } else if (seedInfo) {
+        seedInfo.dataset.tooltip = 'Seed distribution unavailable';
+        seedInfo.style.display = 'none';
+        if (seedChart) seedChart.innerHTML = '';
+        if (seedToggle) {
+            seedToggle.disabled = true;
+            seedToggle.style.display = 'none';
+        }
+    }
     
     // Update best case scenario
     const bestCaseEl = document.getElementById('bestCaseScenario');
+    const bestHintEl = document.querySelector('#bestCaseScenarioItem .scenario-hint');
+    if (!bestCase || !bestCase.result) {
+        bestCaseEl.textContent = 'Disabled for now';
+        if (bestHintEl) bestHintEl.textContent = 'Best case disabled';
+        document.getElementById('bestCaseScenarioItem').classList.add('scenario-disabled');
+    } else {
+    document.getElementById('bestCaseScenarioItem').classList.remove('scenario-disabled');
+    if (bestHintEl) {
+        bestHintEl.textContent = bestCase.source === 'monteCarlo'
+            ? 'Sampled from Monte Carlo runs'
+            : 'Click to apply outcomes';
+    }
     if (bestCase.result.targetMadePlayoffs) {
         const targetPlayoffTeam = bestCase.result.playoffTeams.find(t => t.abbr === targetAbbr);
         
@@ -369,9 +489,23 @@ export function updatePlayoffChancesDisplay(probability, made, total, bestCase, 
         };
         bestCaseEl.textContent = `Miss playoffs (${ordinal(divRank)} in division, ${ordinal(wcRank)} in wildcard - need top 3)`;
     }
+    }
     
     // Update worst case scenario
     const worstCaseEl = document.getElementById('worstCaseScenario');
+    const worstHintEl = document.querySelector('#worstCaseScenarioItem .scenario-hint');
+    if (!worstCase || !worstCase.result) {
+        worstCaseEl.textContent = 'Disabled for now';
+        if (worstHintEl) worstHintEl.textContent = 'Worst case disabled';
+        document.getElementById('worstCaseScenarioItem').classList.add('scenario-disabled');
+        return;
+    }
+    document.getElementById('worstCaseScenarioItem').classList.remove('scenario-disabled');
+    if (worstHintEl) {
+        worstHintEl.textContent = worstCase.source === 'monteCarlo'
+            ? 'Sampled from Monte Carlo runs'
+            : 'Click to apply outcomes';
+    }
     if (worstCase.result.targetMadePlayoffs) {
         const targetPlayoffTeam = worstCase.result.playoffTeams.find(t => t.abbr === targetAbbr);
         
