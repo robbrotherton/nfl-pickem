@@ -1479,3 +1479,18 @@ th {
         font-size: 16px;
     }
 }
+
+/* Matchup context and isolated preview */
+.preview-banner { position: sticky; top: 0; z-index: 100; background: #fff2c2; color: #493700; padding: 10px 16px; text-align: center; font-weight: 600; }
+.preview-banner[hidden] { display: none; }
+.matchup-insights { margin-bottom: 24px; }
+.insight-section { margin: 18px 0; padding-bottom: 14px; border-bottom: 1px solid #ddd; }
+.insight-section h4 { margin: 0 0 10px; font-size: 1.1rem; }
+.insight-section h5 { margin: 12px 0 6px; font-size: 1rem; }
+.insight-section ul { padding-left: 22px; }
+.insight-section li { margin: 8px 0; }
+.insight-note { color: #59636d; font-size: .88rem; line-height: 1.5; margin: 6px 0; }
+.insight-section a { color: #175f96; text-decoration: underline; }
+.insight-section details { margin: 12px 0; }
+.insight-section summary, .schedule-details > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.schedule-details { overflow-x: auto; }

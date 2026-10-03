@@ -41,9 +41,12 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'server.js'), 'utf8'), {
         if (name === 'better-sqlite3') return function () { return db = new Database(':memory:'); };
         if (name === 'https') return fakeHttps;
         if (name === './public/season-context.js') return seasons;
+        if (name.startsWith('./lib/')) return require(path.join(root, name));
         return require(name);
     },
     __dirname: root,
+    URLSearchParams, AbortSignal,
+    fetch: async url => ({ ok: true, json: async () => scoreboard(new URL(url).searchParams) }),
     console: quiet,
     process: { env: {}, on() {} },
     setTimeout(callback) { callback(); }
@@ -103,6 +106,10 @@ const game = (id, season, type, week = 1) => ({
         assert.deepEqual(db.prepare('SELECT id FROM games ORDER BY id').all().map(g=>g.id), ['old','post','pre']);
 
         scoreboard = q => ({season:{year:Number(q.get('dates')),type:Number(q.get('seasontype'))},week:{number:Number(q.get('week'))},events:[]});
+        assert.equal((await call('/api/espn/scoreboard?dates=2026&week=4&seasontype=2')).status,200);
+        for (const query of ['url=https://evil.invalid', 'dates=2026junk', 'week=0', 'seasontype=4', 'dates=2026&week=18&seasontype=1']) {
+            assert.equal((await call('/api/espn/scoreboard?' + query)).status,400);
+        }
         requestedWeeks=[];
         assert.equal((await call('/api/season/2027/seed?season_type=3','POST')).status,200);
         assert.deepEqual(requestedWeeks,[1,2,3,4,5]);
@@ -145,7 +152,7 @@ const game = (id, season, type, week = 1) => ({
     client.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>[]};};
     await vm.runInContext("showGameHistoryModal('Chicago Bears','Detroit Lions',2026)",client);
     assert.ok(urls.every(url=>url.endsWith('?season_type=2')));
-    assert.match(elements.get('gameHistoryTitle').textContent,/2026 Regular Season/);
+    assert.match(elements.get('gameHistoryTitle').textContent,/2026 Matchup/);
     client.fetch=async(url,options)=>{urls.push([url,options]);return {ok:true,json:async()=>({season:{year:2026,type:1},week:{number:1},events:[{}]})};};
     urls.length=0;
     await assert.rejects(vm.runInContext('fetchAndCacheGames(1,2026,2)',client),/season type/);

@@ -1,7 +1,7 @@
 // NFL Pick'em - Client Application
 // Connects to local Express API server
 
-const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl';
+const ESPN_API_BASE = '/api/espn';
 const API_BASE = ''; // Same origin, no prefix needed
 
 let currentWeek = null;
@@ -17,6 +17,10 @@ const weekValueLabelMap = new Map();
 // ========================================
 
 window.addEventListener('DOMContentLoaded', async () => {
+    fetch('/api/app-info').then(response => response.json()).then(info => {
+        const banner = document.getElementById('previewBanner');
+        if (banner) banner.hidden = !info.preview;
+    }).catch(() => {});
     await initSeasonSelector();
     ensureSeasonSeeded().catch(error => {
         console.warn('Season seed check failed:', error);
@@ -996,7 +1000,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType)
         }
         
         html += '<tr>';
-        html += `<td class="team-column game-history-cell ${statusClass}" style="cursor:pointer;" onclick="showGameHistoryModal('${game.away_team.replace(/'/g, "\\'")}', '${game.home_team.replace(/'/g, "\\'")}', ${season})">
+        html += `<td class="team-column game-history-cell ${statusClass}" style="cursor:pointer;" onclick="showGameHistoryModal('${game.away_team.replace(/'/g, "\\'")}', '${game.home_team.replace(/'/g, "\\'")}', ${season}, '${game.id}')">
             <div class="game-info">${dateStr}</div>
             <div class="matchup">
                 <div class="team-info">
@@ -1173,15 +1177,20 @@ async function renderWeeklyLeaderboard(season, week, seasonType) {
 // ========================================
 // GAME HISTORY MODAL
 // ========================================
+let gameHistoryRequest = 0;
 
-async function showGameHistoryModal(awayTeam, homeTeam, season) {
+async function showGameHistoryModal(awayTeam, homeTeam, season, gameId) {
     const modal = document.getElementById('gameHistoryModal');
     const title = document.getElementById('gameHistoryTitle');
     const body = document.getElementById('gameHistoryBody');
     
-    title.textContent = `${awayTeam} vs ${homeTeam} - ${season} Regular Season`;
+    title.textContent = `${awayTeam} vs ${homeTeam} - ${season} Matchup`;
+    const historyRequest = ++gameHistoryRequest;
     body.innerHTML = '<div class="loading">Loading game histories...</div>';
     
+    // Insights load independently, so schedules remain usable if ESPN is slow.
+    const insights = document.getElementById('matchupInsights');
+    if (insights) MatchupInsights.load(insights, gameId);
     // Show modal
     modal.classList.add('show');
     
@@ -1247,8 +1256,8 @@ async function showGameHistoryModal(awayTeam, homeTeam, season) {
                     const teamScore = isHome ? awayGame.home_score : awayGame.away_score;
                     const oppScore = isHome ? awayGame.away_score : awayGame.home_score;
                     const won = teamScore > oppScore;
-                    const resultClass = won ? 'win' : 'loss';
-                    const resultText = won ? 'W' : 'L';
+                    const resultClass = teamScore === oppScore ? 'tie' : won ? 'win' : 'loss';
+                    const resultText = teamScore === oppScore ? 'T' : won ? 'W' : 'L';
                     
                     tableHtml += `<td>
                         <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
@@ -1276,8 +1285,8 @@ async function showGameHistoryModal(awayTeam, homeTeam, season) {
                     const teamScore = isHome ? homeGame.home_score : homeGame.away_score;
                     const oppScore = isHome ? homeGame.away_score : homeGame.home_score;
                     const won = teamScore > oppScore;
-                    const resultClass = won ? 'win' : 'loss';
-                    const resultText = won ? 'W' : 'L';
+                    const resultClass = teamScore === oppScore ? 'tie' : won ? 'win' : 'loss';
+                    const resultText = teamScore === oppScore ? 'T' : won ? 'W' : 'L';
                     
                     tableHtml += `<td>
                         <div>${vsAt} <img src="${oppLogo}" alt="${oppAbbr}" class="team-logo" onerror="this.style.display='none'" style="vertical-align:middle;"> ${oppAbbr}</div>
@@ -1297,10 +1306,10 @@ async function showGameHistoryModal(awayTeam, homeTeam, season) {
         });
         
         tableHtml += '</tbody></table>';
-        body.innerHTML = tableHtml;
+        if (historyRequest === gameHistoryRequest) body.innerHTML = tableHtml;
         
     } catch (error) {
-        body.innerHTML = `<div class="error">Error loading game histories: ${error.message}</div>`;
+        if (historyRequest === gameHistoryRequest) body.innerHTML = `<div class="error">Error loading game histories: ${error.message}</div>`;
     }
 }
 
@@ -1308,6 +1317,8 @@ function closeGameHistoryModal(event) {
     if (event && event.target.className !== 'modal') return;
     const modal = document.getElementById('gameHistoryModal');
     modal.classList.remove('show');
+    gameHistoryRequest++;
+    MatchupInsights.cancel();
 }
 
 // ========================================

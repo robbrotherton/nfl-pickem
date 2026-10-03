@@ -19,7 +19,7 @@ try {
     globalThis.fetch = async url => {
         if (url.includes('/standings/')) return {ok:true,json:async()=>({standings:[]})};
         scoreboardUrls.push(url);
-        const query=new URL(url).searchParams;
+        const query=new URL(url, 'http://localhost').searchParams;
         assert.equal(query.get('dates'),'2020');
         assert.equal(query.get('seasontype'),'2');
         return {ok:true,json:async()=>({season:{year:2020,type:2},week:{number:Number(query.get('week'))},events:[]})};

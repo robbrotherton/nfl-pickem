@@ -7,9 +7,14 @@
     "start": "node server.js",
     "dev": "node server.js",
     "backup": "node scripts/backup.js",
-    "test": "node tests/tiebreakers.test.mjs && node tests/seasons.test.cjs && node tests/season-api.test.mjs"
+    "test": "node tests/tiebreakers.test.mjs && node tests/seasons.test.cjs && node tests/season-api.test.mjs && node tests/matchup-insights.test.cjs",
+    "preview": "node scripts/preview.js"
   },
-  "keywords": ["nfl", "pickem", "football"],
+  "keywords": [
+    "nfl",
+    "pickem",
+    "football"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {

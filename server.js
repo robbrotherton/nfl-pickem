@@ -10,6 +10,8 @@ const https = require('https');
 const app = express();
 const db = new Database(process.env.DB_PATH || path.join(__dirname, 'nfl-pickem.db'));
 const { assertScoreboardContext, weekCount } = require('./public/season-context.js');
+const { createInsights } = require('./lib/matchup-insights.js');
+const matchupInsights = createInsights({ db, cacheDir: process.env.INSIGHTS_CACHE_DIR || path.join(__dirname, '.cache', 'matchup-insights') });
 
 const ESPN_SCOREBOARD_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
 
@@ -208,6 +210,64 @@ app.use('/api', (req, res, next) => {
         }
     }
     next();
+});
+
+// Browser requests go through a fixed ESPN endpoint to avoid upstream CORS restrictions.
+const scoreboardCache = new Map();
+const scoreboardPending = new Map();
+app.get('/api/espn/scoreboard', async (req, res) => {
+    const allowed = { dates: /^\d{4}$/, seasontype: /^[123]$/, week: /^\d{1,2}$/ };
+    for (const [key, value] of Object.entries(req.query)) {
+        if (!allowed[key] || !allowed[key].test(String(value)) || Array.isArray(value)) {
+            return res.status(400).json({ error: 'Invalid scoreboard query.' });
+        }
+    }
+    if ((req.query.dates && (Number(req.query.dates) < 2000 || Number(req.query.dates) > 2100)) ||
+        (req.query.week && (Number(req.query.week) < 1 || Number(req.query.week) > weekCount(Number(req.query.dates) || new Date().getFullYear(), Number(req.query.seasontype) || 2)))) {
+        return res.status(400).json({ error: 'Invalid scoreboard season/week.' });
+    }
+    const query = new URLSearchParams(Object.entries(req.query).sort()).toString();
+    const url = `${ESPN_SCOREBOARD_BASE}${query ? '?' + query : ''}`;
+    try {
+        let entry = scoreboardCache.get(url);
+        if (!entry || Date.now() - entry.time > 60000) {
+            let pending = scoreboardPending.get(url);
+            if (!pending) {
+                pending = (async () => {
+                    const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
+                    if (!response.ok) throw new Error('ESPN scoreboard unavailable.');
+                    const data = await response.json();
+                    if (req.query.dates && req.query.week && req.query.seasontype) {
+                        assertScoreboardContext(data, Number(req.query.dates), Number(req.query.week), Number(req.query.seasontype));
+                    }
+                    const value = { time: Date.now(), data };
+                    if (scoreboardCache.size >= 256) scoreboardCache.delete(scoreboardCache.keys().next().value);
+                    scoreboardCache.set(url, value);
+                    return value;
+                })();
+                scoreboardPending.set(url, pending);
+            }
+            try { entry = await pending; } finally { scoreboardPending.delete(url); }
+        }
+        res.set('Cache-Control', 'no-store').json(entry.data);
+    } catch (error) {
+        res.status(502).json({ error: 'ESPN scoreboard is temporarily unavailable.' });
+    }
+});
+
+app.get('/api/app-info', (req, res) => {
+    res.json({ preview: process.env.APP_PREVIEW === '1' });
+});
+
+app.get('/api/matchup-insights/:gameId', async (req, res) => {
+    try {
+        const insights = await matchupInsights.get(req.params.gameId);
+        if (!insights) return res.status(404).json({ error: 'Game not found.' });
+        res.set('Cache-Control', 'no-store').json(insights);
+    } catch (error) {
+        console.error('Error fetching matchup insights:', error);
+        res.status(502).json({ error: 'Matchup insights are temporarily unavailable.' });
+    }
 });
 
 // ========================================
