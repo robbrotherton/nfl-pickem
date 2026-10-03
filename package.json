@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "backup": "node scripts/backup.js",
     "test": "node tests/tiebreakers.test.mjs"
   },
   "keywords": ["nfl", "pickem", "football"],

@@ -6,6 +6,11 @@ package-lock.json
 *.db
 *.db-shm
 *.db-wal
+*.db.*
+*.bak
+*-backup-*.db
+*copy*.db
+backups/
 
 # Logs
 *.log
