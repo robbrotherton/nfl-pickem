@@ -240,6 +240,7 @@ app.get('/api/espn/scoreboard', async (req, res) => {
                     if (req.query.dates && req.query.week && req.query.seasontype) {
                         assertScoreboardContext(data, Number(req.query.dates), Number(req.query.week), Number(req.query.seasontype));
                     }
+                    matchupInsights.ingestScoreboard(data);
                     const value = { time: Date.now(), data };
                     if (scoreboardCache.size >= 256) scoreboardCache.delete(scoreboardCache.keys().next().value);
                     scoreboardCache.set(url, value);
@@ -1200,7 +1201,10 @@ function fetchEspnScoreboard(season, week, seasonType = 2) {
                     return;
                 }
                 try {
-                    resolve(JSON.parse(data));
+                    const scoreboard = JSON.parse(data);
+                    assertScoreboardContext(scoreboard, season, week, seasonType);
+                    matchupInsights.ingestScoreboard(scoreboard);
+                    resolve(scoreboard);
                 } catch (err) {
                     reject(err);
                 }

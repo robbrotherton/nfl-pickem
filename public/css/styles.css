@@ -1557,3 +1557,8 @@ th {
     #matchupInsights .insight-form-record { flex-shrink: 0; }
 }
 #gameHistoryModal .modal-header { position: sticky; top: -24px; z-index: 2; background: #fff; margin: -24px -24px 18px; padding: 16px 24px; border-bottom: 1px solid #e0e7ef; }
+
+#matchupInsights .insight-watch-player { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid #e0e7ef; align-items: flex-start; }
+#matchupInsights .insight-player-photo { width: 56px; height: 56px; object-fit: contain; background: #edf2f7; border-radius: 10px; flex: 0 0 56px; }
+#matchupInsights .insight-watch-body { min-width: 0; }
+#matchupInsights .insight-watch-stat { margin: 4px 0; font-size: .85rem; font-weight: 600; color: #31475d; overflow-wrap: anywhere; }

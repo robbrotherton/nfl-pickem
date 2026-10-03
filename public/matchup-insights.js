@@ -79,6 +79,29 @@
             }
             card.append(node('p',team.roleNote,'insight-note'));
         }
+        if(data.watch?.teams.length) {
+            const watch=section(container,'Players to watch',data.watch.note);
+            const grid=node('div',undefined,'insight-team-grid');watch.append(grid);
+            for(const team of data.watch.teams) {
+                const card=node('article',undefined,'insight-team-card');grid.append(card);
+                const title=node('h5');title.append(teamLabel(data,team.name));card.append(title);
+                if(team.updatedAt) card.append(node('p',`Stats updated ${new Date(team.updatedAt).toLocaleString()}`,'insight-note'));
+                for(const player of team.players) {
+                    const row=node('div',undefined,'insight-watch-player');
+                    if(/^https:\/\/a\.espncdn\.com\//.test(player.headshot || '')) {
+                        const photo=node('img');photo.alt='';photo.src=player.headshot;photo.loading='lazy';photo.className='insight-player-photo';
+                        photo.addEventListener('error',()=>photo.remove(),{once:true});row.append(photo);
+                    }
+                    const body=node('div',undefined,'insight-watch-body');
+                    const name=node('div',undefined,'insight-player-line');name.append(link(player.name,player.source,'insight-player-name'),node('span',player.position,'insight-position'));
+                    if(player.status) name.append(node('span',player.status,'insight-status insight-status-uncertain'));
+                    body.append(name,node('p',player.label,'insight-player-role'));
+                    for(const stat of player.metrics) body.append(node('p',`${stat.display}${stat.label===player.label ? '' : ' · '+stat.label}`,'insight-watch-stat'));
+                    row.append(body);card.append(row);
+                }
+                if(!team.players.length) empty(card,'Player highlights are unavailable in the saved team data.');
+            }
+        }
         const meetings=section(container,'Recent meetings',data.historyNote);
         const history=node('div',undefined,'insight-meetings');meetings.append(history);
         data.meetings.forEach(game=>{

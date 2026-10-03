@@ -41,7 +41,10 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'server.js'), 'utf8'), {
         if (name === 'better-sqlite3') return function () { return db = new Database(':memory:'); };
         if (name === 'https') return fakeHttps;
         if (name === './public/season-context.js') return seasons;
-        if (name.startsWith('./lib/')) return require(path.join(root, name));
+        if (name.startsWith('./lib/')) {
+            const lib = require(path.join(root, name));
+            return { ...lib, createInsights: options => lib.createInsights({ ...options, cacheDir: undefined }) };
+        }
         return require(name);
     },
     __dirname: root,
