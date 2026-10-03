@@ -8,16 +8,15 @@ const path = require('path');
 const https = require('https');
 
 const app = express();
-const db = new Database('nfl-pickem.db');
+const db = new Database(process.env.DB_PATH || path.join(__dirname, 'nfl-pickem.db'));
+const { assertScoreboardContext, weekCount } = require('./public/season-context.js');
 
 const ESPN_SCOREBOARD_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard';
-const REGULAR_SEASON_WEEK_COUNT = 18;
-const PRESEASON_WEEK_COUNT = 4;
 
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Initialize database tables
 db.exec(`
@@ -171,6 +170,46 @@ try {
     console.error('Error backfilling picks season_type:', e);
 }
 
+// Reject ambiguous season filters before any route can read or mutate data.
+app.param('season', (req, res, next, value) => {
+    if (!/^\d{4}$/.test(value) || Number(value) < 2000 || Number(value) > 2100) {
+        return res.status(400).json({ error: 'Invalid season.' });
+    }
+    next();
+});
+app.param('week', (req, res, next, value) => {
+    if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 22) {
+        return res.status(400).json({ error: 'Invalid week.' });
+    }
+    const type = req.query.playoff === '1' ? 3 : Number(req.query.season_type || 2);
+    if (Number(value) > weekCount(req.params.season, type)) {
+        return res.status(400).json({ error: 'Week is outside the selected season type.' });
+    }
+    next();
+});
+app.use('/api', (req, res, next) => {
+    for (const source of [req.query, req.body]) {
+        if (source.season_type !== undefined && !/^[123]$/.test(String(source.season_type))) {
+            return res.status(400).json({ error: 'Invalid season_type (expected 1, 2, or 3).' });
+        }
+    }
+    if (req.body.season !== undefined && (!/^\d{4}$/.test(String(req.body.season)) || Number(req.body.season) < 2000 || Number(req.body.season) > 2100)) {
+        return res.status(400).json({ error: 'Invalid season.' });
+    }
+    if (req.body.week !== undefined && (!/^\d+$/.test(String(req.body.week)) || Number(req.body.week) < 1 || Number(req.body.week) > 22)) {
+        return res.status(400).json({ error: 'Invalid week.' });
+    }
+    if (req.method === 'POST' && ['/games', '/picks', '/week-players'].includes(req.path)) {
+        if (req.body.season === undefined || req.body.week === undefined) {
+            return res.status(400).json({ error: 'Season and week are required.' });
+        }
+        if (Number(req.body.week) > weekCount(req.body.season, Number(req.body.season_type || 2))) {
+            return res.status(400).json({ error: 'Week is outside the selected season type.' });
+        }
+    }
+    next();
+});
+
 // ========================================
 // Get all games for a season (optionally filter by season_type)
 app.get('/api/games/:season', (req, res) => {
@@ -255,12 +294,11 @@ app.post('/api/season/:season/seed', async (req, res) => {
             countsByWeek[row.week] = row.games;
         });
 
-        const expectedGames = seasonTypeInt === 1 ? 16 : 16;
-        const maxWeeks = seasonTypeInt === 1 ? PRESEASON_WEEK_COUNT : REGULAR_SEASON_WEEK_COUNT;
+        const maxWeeks = weekCount(season, seasonTypeInt);
         const weeksToSeed = [];
         for (let week = 1; week <= maxWeeks; week++) {
             const count = countsByWeek[week] || 0;
-            if (force || count < expectedGames) {
+            if (force || count === 0) {
                 weeksToSeed.push(week);
             }
         }
@@ -277,13 +315,12 @@ app.post('/api/season/:season/seed', async (req, res) => {
 
             const seasonYear = data?.season?.year;
             const seasonType = data?.season?.type;
-            if (seasonYear && seasonYear !== season) {
-                res.status(400).json({ error: `ESPN returned season ${seasonYear} for requested season ${season}.` });
-                return;
-            }
-            if (seasonType && seasonType !== seasonTypeInt) {
-                res.status(400).json({ error: `ESPN returned season_type ${seasonType} for requested season_type ${seasonTypeInt}.` });
-                return;
+            assertScoreboardContext(data, season, week, seasonTypeInt);
+            for (const event of data.events || []) {
+                const existing = db.prepare('SELECT season, week, season_type FROM games WHERE id = ?').get(event.id);
+                if (existing && (existing.season !== season || existing.week !== week || existing.season_type !== seasonTypeInt)) {
+                    throw new Error(`Game ${event.id} already belongs to a different season/week/type.`);
+                }
             }
 
             const events = data?.events || [];
@@ -439,33 +476,14 @@ app.get('/api/games/:season/:week', (req, res) => {
             return;
         }
         let games;
-        if (playoff === '1') {
-            // Playoff mode: fetch week 1 games after last week 18 date
-            const lastRegDateRow = db.prepare(
-                'SELECT MAX(game_date) as lastDate FROM games WHERE season = ? AND week = 18'
-            ).get(season);
-            const lastRegDate = lastRegDateRow ? lastRegDateRow.lastDate : null;
-            if (lastRegDate) {
-                games = db.prepare(
-                    'SELECT * FROM games WHERE season = ? AND week = ? AND game_date > ? ORDER BY game_date, home_team'
-                ).all(season, week, lastRegDate);
-            } else {
-                games = [];
-            }
-            console.log(`[API] /api/games/${season}/${week}?playoff=1: lastRegDate=${lastRegDate}, fetched ${games.length} games`);
-        } else if (seasonTypeInt !== undefined && !isNaN(seasonTypeInt)) {
-            // Filter by season_type if provided
-            games = db.prepare(
-                'SELECT * FROM games WHERE season = ? AND week = ? AND season_type = ? ORDER BY game_date, home_team'
-            ).all(season, week, seasonTypeInt);
-            console.log(`[API] /api/games/${season}/${week}?season_type=${seasonTypeInt}: fetched ${games.length} games`);
-        } else {
-            // Default: all games for week
-            games = db.prepare(
-                'SELECT * FROM games WHERE season = ? AND week = ? ORDER BY game_date, home_team'
-            ).all(season, week);
-            console.log(`[API] /api/games/${season}/${week}: fetched ${games.length} games`);
+        // Legacy playoff flag maps to the explicit postseason type.
+        if (playoff === '1' && seasonTypeInt !== undefined && seasonTypeInt !== 3) {
+            return res.status(400).json({ error: 'Conflicting playoff and season_type filters.' });
         }
+        seasonTypeInt = playoff === '1' ? 3 : (seasonTypeInt ?? 2);
+        games = db.prepare(
+            'SELECT * FROM games WHERE season = ? AND week = ? AND season_type = ? ORDER BY game_date, home_team'
+        ).all(season, week, seasonTypeInt);
         if (games.length > 0) {
             games.forEach(g => {
                 console.log(`  - ${g.away_abbr} @ ${g.home_abbr} (${g.game_date}) status=${g.status}`);
@@ -483,6 +501,14 @@ app.post('/api/games', (req, res) => {
     try {
         const { id, season, week, season_type, game_date, away_team, home_team, away_abbr, home_abbr, 
             away_logo, home_logo, away_wordmark, home_wordmark, away_record, home_record, away_score, home_score, winner, status } = req.body;
+
+        if (season === undefined || week === undefined || season_type === undefined) {
+            return res.status(400).json({ error: 'Game season, week, and season_type are required.' });
+        }
+        const existing = db.prepare('SELECT season, week, season_type FROM games WHERE id = ?').get(id);
+        if (existing && (existing.season !== Number(season) || existing.week !== Number(week) || existing.season_type !== Number(season_type))) {
+            return res.status(409).json({ error: 'Cannot move an existing game to another season/week/type.' });
+        }
 
         db.prepare(`
             INSERT OR REPLACE INTO games 
@@ -506,16 +532,9 @@ app.delete('/api/games/:season/:week', (req, res) => {
         const { season_type } = req.query;
         season = parseInt(season, 10);
         week = parseInt(week, 10);
-        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : null;
-        if (!Number.isInteger(season) || !Number.isInteger(week)) {
-            res.status(400).json({ error: 'Invalid season or week parameter.' });
-            return;
-        }
-        if (seasonTypeInt !== null && !isNaN(seasonTypeInt)) {
-            db.prepare('DELETE FROM games WHERE season = ? AND week = ? AND season_type = ?').run(season, week, seasonTypeInt);
-        } else {
-            db.prepare('DELETE FROM games WHERE season = ? AND week = ?').run(season, week);
-        }
+        // Omitted filter means regular season, never every type with this week number.
+        const seasonTypeInt = season_type !== undefined ? Number(season_type) : 2;
+        db.prepare('DELETE FROM games WHERE season = ? AND week = ? AND season_type = ?').run(season, week, seasonTypeInt);
         res.json({ success: true });
     } catch (error) {
         console.error('Error deleting games:', error);
@@ -527,13 +546,14 @@ app.delete('/api/games/:season/:week', (req, res) => {
 app.get('/api/games/:season/team/:teamName', (req, res) => {
     try {
         const { season, teamName } = req.params;
-        const decodedTeamName = decodeURIComponent(teamName);
+        const decodedTeamName = teamName;
+        const seasonType = req.query.season_type === undefined ? 2 : Number(req.query.season_type);
         
         const games = db.prepare(`
             SELECT * FROM games 
-            WHERE season = ? AND (away_team = ? OR home_team = ?)
-            ORDER BY week ASC
-        `).all(season, decodedTeamName, decodedTeamName);
+            WHERE season = ? AND season_type = ? AND (away_team = ? OR home_team = ?)
+            ORDER BY week ASC, game_date ASC
+        `).all(season, seasonType, decodedTeamName, decodedTeamName);
         
         res.json(games);
     } catch (error) {
@@ -578,6 +598,14 @@ app.post('/api/picks', (req, res) => {
         const { player_name, game_id, season, week, season_type, picked_team } = req.body;
         const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         
+        const game = db.prepare('SELECT * FROM games WHERE id = ?').get(game_id);
+        if (!game || game.season !== Number(season) || game.week !== Number(week) || game.season_type !== seasonTypeInt) {
+            return res.status(400).json({ error: 'Pick season/week/type must match its game.' });
+        }
+        if (picked_team !== game.away_team && picked_team !== game.home_team) {
+            return res.status(400).json({ error: 'Picked team must be in the game.' });
+        }
+
         db.prepare(`
             INSERT OR REPLACE INTO picks 
             (player_name, game_id, season, week, season_type, picked_team, is_correct, picked_at) 
@@ -637,7 +665,7 @@ app.get('/api/leaderboard/:season', (req, res) => {
                     player_name,
                     SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as wins,
                     SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as losses,
-                    COUNT(DISTINCT week) as weeks_played
+                    COUNT(DISTINCT season_type || ':' || week) as weeks_played
                 FROM picks
                 WHERE season = ? AND is_correct IS NOT NULL
                 GROUP BY player_name
@@ -660,7 +688,7 @@ app.get('/api/leaderboard/:season/:week', (req, res) => {
     try {
         const { season, week } = req.params;
         const { season_type } = req.query;
-        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : null;
+        const seasonTypeInt = season_type !== undefined ? parseInt(season_type, 10) : 2;
         
         let standings;
         if (seasonTypeInt !== null && !isNaN(seasonTypeInt)) {
@@ -1077,7 +1105,7 @@ app.get('/api/head-to-head/:season', (req, res) => {
 // ========================================
 
 const PORT = process.env.PORT || 3000;
-const HOST = '0.0.0.0'; // Listen on all network interfaces
+const HOST = process.env.HOST || '0.0.0.0'; // Listen on all network interfaces
 
 app.listen(PORT, HOST, () => {
     console.log('');

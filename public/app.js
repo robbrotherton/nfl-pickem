@@ -5,7 +5,8 @@ const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/nf
 const API_BASE = ''; // Same origin, no prefix needed
 
 let currentWeek = null;
-let currentSeason = new Date().getFullYear();
+let currentSeason = NFLSeason.fallbackSeasonYear();
+const seasonCalendars = new Map();
 let adminMode = false; // Allow picks for past games
 let cachedSeasonInfo = null;
 let leaderboardSeasonTypeFilter = 'all';
@@ -28,7 +29,7 @@ async function initSeasonSelector() {
     const seasonSelect = document.getElementById('seasonSelect');
     if (!seasonSelect) return;
     
-    const currentYear = new Date().getFullYear();
+    const currentYear = NFLSeason.fallbackSeasonYear();
     
     try {
         // Fetch available seasons from the database
@@ -90,17 +91,17 @@ async function initSeasonSelector() {
 }
 
 async function ensureSeasonSeeded() {
-    if (!currentSeason) return;
-    await fetch(`${API_BASE}/api/season/${currentSeason}/seed`, { method: 'POST' });
-    await fetch(`${API_BASE}/api/season/${currentSeason}/seed?season_type=1`, { method: 'POST' });
+    const season = currentSeason;
+    if (!season) return;
+    await fetch(`${API_BASE}/api/season/${season}/seed`, { method: 'POST' });
+    await fetch(`${API_BASE}/api/season/${season}/seed?season_type=1`, { method: 'POST' });
 }
 
 async function initWeekSelector() {
     const select = document.getElementById('weekSelect');
     const selectTitle = document.getElementById('weekSelectTitle');
     
-    const seasonInfo = await getCurrentSeasonInfo();
-    const weekOptions = buildWeekOptions(seasonInfo?.calendar);
+    const weekOptions = buildWeekOptions(await getSeasonCalendar(currentSeason));
     const currentValue = await getCurrentWeekSelection();
     weekValueLabelMap.clear();
     
@@ -192,12 +193,13 @@ async function changeWeek(direction) {
     loadSchedule();
 }
 
-function changeSeason() {
+async function changeSeason() {
     const seasonSelect = document.getElementById('seasonSelect');
     if (seasonSelect) {
         currentSeason = parseInt(seasonSelect.value);
         resizeSelect(seasonSelect);
-        loadSchedule();
+        await initWeekSelector();
+        await loadSchedule();
     }
 }
 
@@ -246,7 +248,7 @@ async function getCurrentSeasonInfo() {
         const data = await response.json();
         cachedSeasonInfo = {
             seasonYear: data.season?.year || data.leagues?.[0]?.season?.year || null,
-            seasonType: data.season?.type || data.leagues?.[0]?.season?.type?.type || null,
+            seasonType: Number(data.season?.type || data.leagues?.[0]?.season?.type?.type) || null,
             weekNumber: data.week?.number || data.leagues?.[0]?.week?.number || null,
             calendar: data.calendar || data.leagues?.[0]?.calendar || null
         };
@@ -261,7 +263,7 @@ async function getPreferredSeasonYear(currentYear = new Date().getFullYear()) {
     const seasonInfo = await getCurrentSeasonInfo();
     const espnSeason = seasonInfo?.seasonYear ? Number(seasonInfo.seasonYear) : null;
 
-    if (espnSeason && espnSeason >= currentYear) {
+    if (espnSeason && (espnSeason >= currentYear || seasonInfo.seasonType === 3)) {
         return espnSeason;
     }
 
@@ -279,11 +281,33 @@ async function getPreferredSeasonYear(currentYear = new Date().getFullYear()) {
     return espnSeason;
 }
 
+async function getSeasonCalendar(season) {
+    if (seasonCalendars.has(season)) return seasonCalendars.get(season);
+    const current = await getCurrentSeasonInfo();
+    if (Number(current?.seasonYear) === Number(season) && current?.calendar) {
+        seasonCalendars.set(season, current.calendar);
+        return current.calendar;
+    }
+    try {
+        const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${season}&week=1&seasontype=2`);
+        if (!response.ok) throw new Error('Unable to load season calendar.');
+        const data = await response.json();
+        NFLSeason.assertScoreboardContext(data, season, 1, 2);
+        const calendar = data.calendar || data.leagues?.[0]?.calendar || null;
+        seasonCalendars.set(season, calendar);
+        return calendar;
+    } catch (error) {
+        console.warn('Using fallback calendar for selected season:', error);
+        return null;
+    }
+}
+
 function getFallbackRegularSeasonWeek() {
     const now = new Date();
-    const seasonStart = new Date(now.getFullYear(), 8, 1); // September 1st
+    if (currentSeason < NFLSeason.fallbackSeasonYear(now) || now.getMonth() < 2) return NFLSeason.weekCount(currentSeason, 2);
+    const seasonStart = new Date(currentSeason, 8, 1); // September 1st
     const weeksSinceStart = Math.floor((now - seasonStart) / (7 * 24 * 60 * 60 * 1000));
-    return Math.max(1, Math.min(18, weeksSinceStart + 1));
+    return Math.max(1, Math.min(NFLSeason.weekCount(currentSeason, 2), weeksSinceStart + 1));
 }
 
 function mapPostseasonWeekToValue(weekNumber) {
@@ -299,14 +323,17 @@ function mapPostseasonWeekToValue(weekNumber) {
 
 async function getCurrentWeekSelection() {
     const seasonInfo = await getCurrentSeasonInfo();
-    if (seasonInfo?.seasonType === 3 && seasonInfo?.weekNumber) {
+    if (seasonInfo?.seasonYear && Number(seasonInfo.seasonYear) !== Number(currentSeason)) {
+        return Number(currentSeason) < Number(seasonInfo.seasonYear) ? `2:${NFLSeason.weekCount(currentSeason, 2)}` : '2:1';
+    }
+    if (Number(seasonInfo?.seasonType) === 3 && seasonInfo?.weekNumber) {
         return mapPostseasonWeekToValue(seasonInfo.weekNumber);
     }
-    if (seasonInfo?.seasonType === 1 && seasonInfo?.weekNumber) {
+    if (Number(seasonInfo?.seasonType) === 1 && seasonInfo?.weekNumber) {
         return `1:${seasonInfo.weekNumber}`;
     }
-    if (seasonInfo?.seasonType === 2 && seasonInfo?.weekNumber) {
-        return `2:${Math.max(1, Math.min(18, seasonInfo.weekNumber))}`;
+    if (Number(seasonInfo?.seasonType) === 2 && seasonInfo?.weekNumber) {
+        return `2:${Math.max(1, Math.min(NFLSeason.weekCount(currentSeason, 2), seasonInfo.weekNumber))}`;
     }
     return `2:${getFallbackRegularSeasonWeek()}`;
 }
@@ -317,11 +344,11 @@ function buildWeekOptions(calendar) {
     if (Array.isArray(calendar) && calendar.length > 0) {
         calendar.forEach(item => {
             const seasonType = parseInt(item.value, 10);
-            if (!Number.isInteger(seasonType)) return;
+            if (![1, 2, 3].includes(seasonType)) return;
             const entries = Array.isArray(item.entries) ? item.entries : [];
             entries.forEach(entry => {
                 const weekNumber = parseInt(entry.value, 10);
-                if (!Number.isInteger(weekNumber)) return;
+                if (!Number.isInteger(weekNumber) || weekNumber < 1 || weekNumber > NFLSeason.weekCount(currentSeason, seasonType)) return;
                 const value = `${seasonType}:${weekNumber}`;
                 const label = entry.label || defaultWeekLabel(seasonType, weekNumber);
                 options.push({ value, label, seasonType, week: weekNumber });
@@ -330,7 +357,10 @@ function buildWeekOptions(calendar) {
     }
 
     if (options.length === 0) {
-        for (let i = 1; i <= 18; i++) {
+        for (let i = 1; i <= NFLSeason.weekCount(currentSeason, 1); i++) {
+            options.push({ value: `1:${i}`, label: `Preseason Week ${i}`, seasonType: 1, week: i });
+        }
+        for (let i = 1; i <= NFLSeason.weekCount(currentSeason, 2); i++) {
             options.push({ value: `2:${i}`, label: `Week ${i}`, seasonType: 2, week: i });
         }
         const postseasonLabels = [
@@ -399,7 +429,9 @@ function shouldRefreshGames(cachedGames) {
 
 async function fetchAndCacheGames(week, season, seasonType = 2) {
     const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${season}&week=${week}&seasontype=${seasonType}`);
+    if (!response.ok) throw new Error('Unable to fetch ESPN schedule.');
     const data = await response.json();
+    NFLSeason.assertScoreboardContext(data, season, week, seasonType);
 
     if (!data.events || data.events.length === 0) {
         return null;
@@ -466,12 +498,13 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
         };
 
         // Save to database
-        await fetch(`${API_BASE}/api/games`, {
+        const saved = await fetch(`${API_BASE}/api/games`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(gameData)
         });
 
+        if (!saved.ok) throw new Error('Unable to save game in the requested season/week/type.');
         games.push(gameData);
     }
 
@@ -508,14 +541,9 @@ async function forceRefreshSchedule() {
     const week = weekInfo.week;
     const seasonType = weekInfo.type;
     
-    // Delete cached games
-    const deleteResponse = await fetch(`${API_BASE}/api/games/${season}/${week}?season_type=${seasonType}`, {
-        method: 'DELETE'
-    });
-    
-    // Force fetch from ESPN (bypassing cache)
-    const games = await fetchAndCacheGames(week, season, seasonType);
-    
+    // Upsert only after ESPN's context is verified; retain the cache on failure.
+    await fetchAndCacheGames(week, season, seasonType);
+
     // Reload schedule (will now use fresh data from DB)
     await loadSchedule();
 }
@@ -1151,7 +1179,7 @@ async function showGameHistoryModal(awayTeam, homeTeam, season) {
     const title = document.getElementById('gameHistoryTitle');
     const body = document.getElementById('gameHistoryBody');
     
-    title.textContent = `${awayTeam} vs ${homeTeam} - Game Histories`;
+    title.textContent = `${awayTeam} vs ${homeTeam} - ${season} Regular Season`;
     body.innerHTML = '<div class="loading">Loading game histories...</div>';
     
     // Show modal
@@ -1160,10 +1188,11 @@ async function showGameHistoryModal(awayTeam, homeTeam, season) {
     try {
         // Fetch both teams' game histories in parallel
         const [awayResponse, homeResponse] = await Promise.all([
-            fetch(`/api/games/${season}/team/${encodeURIComponent(awayTeam)}`),
-            fetch(`/api/games/${season}/team/${encodeURIComponent(homeTeam)}`)
+            fetch(`/api/games/${season}/team/${encodeURIComponent(awayTeam)}?season_type=2`),
+            fetch(`/api/games/${season}/team/${encodeURIComponent(homeTeam)}?season_type=2`)
         ]);
         
+        if (!awayResponse.ok || !homeResponse.ok) throw new Error('Unable to load regular-season schedules.');
         const [awayGames, homeGames] = await Promise.all([
             awayResponse.json(),
             homeResponse.json()

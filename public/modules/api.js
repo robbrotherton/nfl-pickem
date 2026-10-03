@@ -1,7 +1,8 @@
+import '../season-context.js';
 // api.js
 // All API calls to ESPN and local server
 
-import { ESPN_API_BASE, ESPN_CORE_API_BASE, DIVISION_MAP, REGULAR_SEASON_WEEKS, FALLBACK_SEASON, FALLBACK_WEEK } from './constants.js';
+import { ESPN_API_BASE, ESPN_CORE_API_BASE, DIVISION_MAP } from './constants.js';
 import { getCurrentSeason, getCurrentWeek, setCurrentSeason, setCurrentWeek } from './state.js';
 
 // ========================================
@@ -21,37 +22,36 @@ export async function fetchCurrentSeasonInfo() {
         const data = await response.json();
         
         if (data.season && data.week) {
-            const seasonYear = data.season.year;
-            const seasonType = data.season.type; // 1=preseason, 2=regular, 3=postseason
-            const weekNumber = data.week.number;
+            const seasonYear = Number(data.season.year);
+            const seasonType = Number(data.season.type); // 1=preseason, 2=regular, 3=postseason
+            const weekNumber = Number(data.week.number);
             
             setCurrentSeason(seasonYear);
             
             // If we're in the playoffs (seasontype 3) or offseason, use week 18 (final regular season week)
             // This ensures the playoff calculator shows final regular season standings
             if (seasonType === 3 || seasonType === 4) {
-                setCurrentWeek(REGULAR_SEASON_WEEKS);
-                console.log(`📅 Current Season: ${seasonYear}, Playoffs Week ${weekNumber} - Using regular season Week ${REGULAR_SEASON_WEEKS} for standings`);
+                setCurrentWeek(NFLSeason.weekCount(seasonYear, 2));
+                console.log(`📅 Current Season: ${seasonYear}, Playoffs Week ${weekNumber} - Using regular season Week ${NFLSeason.weekCount(seasonYear, 2)} for standings`);
             } else if (seasonType === 2) {
                 // Regular season - use current week (capped at 18)
-                setCurrentWeek(Math.min(weekNumber, REGULAR_SEASON_WEEKS));
+                setCurrentWeek(Math.min(weekNumber, NFLSeason.weekCount(seasonYear, 2)));
                 console.log(`📅 Current Season: ${seasonYear}, Week: ${weekNumber}`);
             } else {
-                // Preseason (type 1) - use fallback
-                setCurrentSeason(FALLBACK_SEASON);
-                setCurrentWeek(FALLBACK_WEEK);
-                console.warn('⚠️ Preseason detected, using fallback season/week values');
+                // Preseason starts a new year; regular-season standings start at Week 1.
+                setCurrentWeek(1);
+                console.log(`Preseason ${seasonYear}: using regular season Week 1.`);
             }
         } else {
             // Fallback to defaults if API doesn't provide
-            setCurrentSeason(FALLBACK_SEASON);
-            setCurrentWeek(FALLBACK_WEEK);
+            setCurrentSeason(NFLSeason.fallbackSeasonYear());
+            setCurrentWeek(1);
             console.warn('⚠️ Using fallback season/week values');
         }
     } catch (error) {
         console.error('Error fetching season info:', error);
-        setCurrentSeason(FALLBACK_SEASON);
-        setCurrentWeek(FALLBACK_WEEK);
+        setCurrentSeason(NFLSeason.fallbackSeasonYear());
+        setCurrentWeek(1);
     }
 }
 
@@ -126,8 +126,10 @@ export async function fetchStandings() {
     
     // Fetch all weeks so far to build current standings
     for (let week = 1; week <= currentWeek; week++) {
-        const response = await fetch(`${ESPN_API_BASE}/scoreboard?seasontype=2&week=${week}`);
+        const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${getCurrentSeason()}&seasontype=2&week=${week}`);
+        if (!response.ok) throw new Error('Unable to fetch ESPN schedule.');
         const data = await response.json();
+        NFLSeason.assertScoreboardContext(data, getCurrentSeason(), week, 2);
         
         if (data.events) {
             data.events.forEach(event => {
@@ -191,9 +193,11 @@ export async function fetchRemainingGames() {
     const currentWeek = getCurrentWeek();
     
     // Fetch remaining weeks (current week + future weeks through week 18)
-    for (let week = currentWeek; week <= REGULAR_SEASON_WEEKS; week++) {
-        const response = await fetch(`${ESPN_API_BASE}/scoreboard?seasontype=2&week=${week}`);
+    for (let week = currentWeek; week <= NFLSeason.weekCount(getCurrentSeason(), 2); week++) {
+        const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${getCurrentSeason()}&seasontype=2&week=${week}`);
+        if (!response.ok) throw new Error('Unable to fetch ESPN schedule.');
         const data = await response.json();
+        NFLSeason.assertScoreboardContext(data, getCurrentSeason(), week, 2);
         
         if (data.events) {
             data.events.forEach(event => {

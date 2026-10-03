@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "backup": "node scripts/backup.js",
-    "test": "node tests/tiebreakers.test.mjs"
+    "test": "node tests/tiebreakers.test.mjs && node tests/seasons.test.cjs && node tests/season-api.test.mjs"
   },
   "keywords": ["nfl", "pickem", "football"],
   "author": "",
