@@ -45,3 +45,23 @@ There is no AI invocation, paid API dependency, or weather feature in this first
 Screenshots are in the ignored `.preview/matchup-desktop.png` and `.preview/matchup-mobile.png` files.
 
 Nothing has been merged into main or deployed to the original live process. Review the preview before production rollout; take a fresh consistent database backup at rollout time.
+
+## Popup requests and cache lifetimes
+
+Each opening makes one request to `/api/matchup-insights/:gameId` and two requests to the local team-schedule endpoint. The server assembles insights on each request from the database and cached ESPN responses. No AI runs.
+
+The ESPN base is `https://site.api.espn.com/apis/site/v2/sports/football/nfl`:
+
+| ESPN path | Purpose | Cache lifetime |
+| --- | --- | --- |
+| `/summary?event=GAME_ID` | Selected matchup and team IDs | 5 minutes |
+| `/teams/TEAM_ID/schedule?season=YEAR&seasontype=2` | Recent meetings; selected year plus five previous years, using one team's schedules | 10 minutes for selected year; 24 hours for older years |
+| `/injuries` | Shared current injury feed | 10 minutes |
+| `/teams/TEAM_ID/depthcharts` | Both teams' listed starters | 6 hours |
+| `/summary?event=PREVIOUS_GAME_ID` | Each team's recent offensive leaders | 24 hours |
+
+Injury, depth-chart, and recent-leader requests apply only to uncompleted matchups near kickoff with a matching injury-report year. Missing previous games skip the corresponding summary request. Common-opponent comparisons and recent form are computed from local stored games and require no extra ESPN calls.
+
+The raw-response cache is shared by URL across users and matchups, held in memory and written into the preview's ignored insight-cache directory so it survives restarts. Identical simultaneous requests share one upstream fetch. Expired responses are refreshed when next requested; there is no scheduled polling job. The browser requests a new assembled response each time the popup opens. Scoreboards elsewhere in the app have a separate one-minute memory cache.
+
+The popup now reuses team-logo metadata already in schedules, summaries, and stored games. Meetings have two-team score rows, common opponents have team comparison cards, and recent form has opponent logos and W/L/T badges. Cards stack on phones, missing images fall back to abbreviations, and the popup header/close button stay visible while scrolling. No extra ESPN calls were introduced for logos.
