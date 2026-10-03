@@ -1479,3 +1479,90 @@ th {
         font-size: 16px;
     }
 }
+
+/* Matchup context and isolated preview */
+.preview-banner { position: sticky; top: 0; z-index: 100; background: #fff2c2; color: #493700; padding: 10px 16px; text-align: center; font-weight: 600; }
+.preview-banner[hidden] { display: none; }
+.matchup-insights { margin-bottom: 24px; }
+.insight-section { margin: 18px 0; padding-bottom: 14px; border-bottom: 1px solid #ddd; }
+.insight-section h4 { margin: 0 0 10px; font-size: 1.1rem; }
+.insight-section h5 { margin: 12px 0 6px; font-size: 1rem; }
+.insight-section ul { padding-left: 22px; }
+.insight-section li { margin: 8px 0; }
+.insight-note { color: #59636d; font-size: .88rem; line-height: 1.5; margin: 6px 0; }
+.insight-section a { color: #175f96; text-decoration: underline; }
+.insight-section details { margin: 12px 0; }
+.insight-section summary, .schedule-details > summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+.schedule-details { overflow-x: auto; }
+
+/* Logo-based matchup comparisons */
+#matchupInsights .insight-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+#matchupInsights .insight-heading h3 { margin: 0; }
+#matchupInsights .insight-kicker { color: #667585; font-size: .78rem; font-weight: 500; }
+#matchupInsights .insight-team-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 12px; }
+#matchupInsights .insight-team-card { background: #f8fafc; border: 1px solid #e0e7ef; border-radius: 12px; padding: 16px; min-width: 0; }
+#matchupInsights .insight-team-card h5 { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 14px; }
+#matchupInsights .insight-team { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+#matchupInsights .insight-team-name { overflow-wrap: anywhere; }
+#matchupInsights .insight-team-logo { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex: 0 0 34px; }
+#matchupInsights .insight-team-logo img { width: 100%; height: 100%; object-fit: contain; }
+#matchupInsights .insight-logo-fallback { font-size: .65rem; font-weight: 700; color: #5c6d7c; background: #e8eef5; padding: 5px; border-radius: 6px; }
+#matchupInsights .insight-logo-fallback[hidden] { display: none; }
+#matchupInsights .insight-result { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 7px; font-size: .82rem; font-weight: 750; flex: 0 0 28px; }
+#matchupInsights .insight-result-w { color: #17643c; background: #dcf3e5; }
+#matchupInsights .insight-result-l { color: #9b3232; background: #fbe4e4; }
+#matchupInsights .insight-result-t { color: #4e5c6c; background: #e6ebf1; }
+#matchupInsights .insight-score-row { display: grid; grid-template-columns: 28px 66px minmax(0, 1fr); gap: 10px; align-items: center; padding: 12px 0; color: #26374a; text-decoration: none; border-top: 1px solid #e0e7ef; }
+#matchupInsights .insight-score-row:hover, #matchupInsights .insight-meeting:hover { background: #edf3fa; }
+#matchupInsights .insight-score { font-weight: 750; font-size: 1rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#matchupInsights .insight-opponent { display: inline-flex; gap: 8px; align-items: center; min-width: 0; }
+#matchupInsights .insight-location { font-size: .8rem; color: #687889; }
+#matchupInsights .insight-game-meta { grid-column: 2 / -1; color: #687889; font-size: .78rem; margin-top: -6px; }
+#matchupInsights .insight-form-record { display: inline-flex; gap: 4px; }
+#matchupInsights .insight-form-record .insight-result { width: 22px; height: 22px; flex-basis: 22px; font-size: .7rem; }
+#matchupInsights .insight-meetings { display: grid; gap: 8px; margin-top: 12px; }
+#matchupInsights .insight-meeting { display: grid; grid-template-columns: 130px minmax(0, 1fr) 24px minmax(0, 1fr); align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid #e0e7ef; border-radius: 10px; text-decoration: none; color: #26374a; }
+#matchupInsights .insight-meeting-date { color: #687889; font-size: .82rem; }
+#matchupInsights .insight-meeting-team { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+#matchupInsights .insight-meeting-team strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+#matchupInsights .insight-meeting-at { text-align: center; color: #687889; }
+#matchupInsights .insight-winning-score { color: #17643c; }
+#matchupInsights .insight-common-card { border: 1px solid #e0e7ef; border-radius: 12px; padding: 14px 16px; margin-top: 12px; }
+#matchupInsights .insight-common-card > h5 { display: flex; align-items: center; gap: 12px; margin: 0; }
+#matchupInsights .insight-comparison { min-width: 0; background: #f8fafc; border-radius: 8px; padding: 12px; }
+#matchupInsights .insight-comparison > .insight-team { font-weight: 650; margin-bottom: 8px; }
+#matchupInsights .insight-empty { color: #687889; background: #f8fafc; border: 1px dashed #dbe3ec; border-radius: 8px; padding: 12px 14px; font-size: .88rem; }
+#matchupInsights .insight-player-list { padding: 0; margin: 0; list-style: none; }
+#matchupInsights .insight-player { padding: 12px 0; border-top: 1px solid #e0e7ef; margin: 0; }
+#matchupInsights .insight-player-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#matchupInsights .insight-player-name { color: #26374a; font-weight: 650; text-decoration: none; }
+#matchupInsights .insight-player-name:hover { text-decoration: underline; }
+#matchupInsights .insight-position { color: #687889; font-size: .76rem; }
+#matchupInsights .insight-status { border-radius: 5px; padding: 3px 7px; font-size: .73rem; font-weight: 650; }
+#matchupInsights .insight-status-out { color: #9b3232; background: #fbe4e4; }
+#matchupInsights .insight-status-uncertain { color: #815413; background: #fff0ce; }
+#matchupInsights .insight-status-other { color: #4e5c6c; background: #e6ebf1; }
+#matchupInsights .insight-player-role { font-size: .78rem; color: #687889; margin: 5px 0; }
+#matchupInsights .insight-player-comment { font-size: .85rem; color: #4e5e70; line-height: 1.5; margin: 6px 0; }
+#matchupInsights .insight-full-report { border-top: 1px solid #e0e7ef; font-size: .85rem; }
+#matchupInsights a:focus-visible { outline: 2px solid #175f96; outline-offset: 3px; }
+@media (max-width: 700px) {
+    #matchupInsights .insight-team-grid { grid-template-columns: minmax(0, 1fr); }
+    #matchupInsights .insight-team-card { padding: 12px; }
+    #matchupInsights .insight-meeting { grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr); gap: 8px; padding: 12px; }
+    #matchupInsights .insight-meeting-date { grid-column: 1 / -1; }
+    #matchupInsights .insight-meeting-team { flex-direction: column; align-items: flex-start; gap: 6px; }
+    #matchupInsights .insight-meeting .insight-team { flex-direction: column; align-items: flex-start; gap: 4px; font-size: .8rem; }
+    #matchupInsights .insight-common-card { padding: 12px; }
+    #matchupInsights .insight-form-record { flex-shrink: 0; }
+}
+#gameHistoryModal .modal-header { position: sticky; top: -24px; z-index: 2; background: #fff; margin: -24px -24px 18px; padding: 16px 24px; border-bottom: 1px solid #e0e7ef; }
+
+#matchupInsights .insight-watch-player { display: flex; gap: 12px; padding: 14px 0; border-top: 1px solid #e0e7ef; align-items: flex-start; }
+#matchupInsights .insight-player-photo { width: 56px; height: 56px; object-fit: contain; background: #edf2f7; border-radius: 10px; flex: 0 0 56px; }
+#matchupInsights .insight-watch-body { min-width: 0; }
+#matchupInsights .insight-watch-stat { margin: 4px 0; font-size: .85rem; font-weight: 600; color: #31475d; overflow-wrap: anywhere; }
+#matchupInsights .insight-group-title { margin: 18px 0 5px; color: #31475d; font-size: .82rem; font-weight: 700; }
+#matchupInsights .insight-qb-note { border-left: 3px solid #dba14a; background: #fff7e8; padding: 9px 12px; font-size: .82rem; line-height: 1.5; color: #71572e; }
+#matchupInsights .insight-data-times { line-height: 1.5; overflow-wrap: anywhere; }
+#matchupInsights .insight-game-availability { grid-column: 2 / -1; color: #687889; font-size: .75rem; line-height: 1.4; }
