@@ -52,7 +52,7 @@ There is no AI invocation, paid API dependency, or weather feature in this versi
 
 Screenshots are in ignored `.preview` files, including `vikings-qb-desktop.png`, `bears-qb-desktop.png`, and `bears-qb-mobile.png`.
 
-This implementation is integrated into `origin/main`. The live checkout remains at `0a03701` until a separate deployment updates its files and restarts the process. Integration was performed in a separate worktree because the running server serves frontend assets directly from its checkout. The preview remains available for review; take fresh consistent database backups at rollout time.
+This implementation is integrated into `origin/main` and deployed on port 3000 from release `8402616` as of October 3, 2026. Integration used a separate worktree because the server serves frontend files directly from its checkout. Deployment took consistent online/stopped-app backups before updating files and restarting only `nfl-pickem`. Live desktop/mobile checks passed; all picks, players, weekly player lists, game records, and the database schema were verified against the backup. Only normal game refresh timestamps changed during live checks. Deployment backups and the verification record are in `backups/deploy-2026-10-03T20-17-05-133Z/`, including a backup of the new production metadata/history database. The preview remains separate and available for review.
 
 ## Popup requests and cache lifetimes
 
