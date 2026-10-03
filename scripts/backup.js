@@ -1,4 +1,5 @@
-// Consistent online backup of the SQLite DB; keeps the newest KEEP files.
+// Consistent online backup of the SQLite DB; keeps the newest KEEP dated files
+// (git-ignored) plus backups/nfl-pickem-latest.db, which is committed.
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
@@ -14,7 +15,8 @@ const KEEP = Number(process.env.BACKUP_KEEP) || 14;
   const db = new Database(path.join(root, 'nfl-pickem.db'), { readonly: true });
   await db.backup(file);
   db.close();
-  console.log(`Backup written: ${file}`);
+  fs.copyFileSync(file, path.join(dest, 'nfl-pickem-latest.db'));
+  console.log(`Backup written: ${file} (and nfl-pickem-latest.db)`);
 
   const old = fs.readdirSync(dest)
     .filter(f => /^nfl-pickem-\d{4}-.*\.db$/.test(f)).sort().reverse().slice(KEEP);

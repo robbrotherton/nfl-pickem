@@ -10,7 +10,7 @@ package-lock.json
 *.bak
 *-backup-*.db
 *copy*.db
-backups/
+backups/*
 
 # Logs
 *.log
@@ -29,3 +29,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Latest DB snapshot is committed
+!backups/nfl-pickem-latest.db
