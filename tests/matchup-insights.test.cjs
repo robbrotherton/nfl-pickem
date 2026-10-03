@@ -1,6 +1,6 @@
 const assert=require('node:assert/strict');
 const Database=require('better-sqlite3');
-const {createInsights,rankInjuries,athleteId,commonOpponents,normalizeSchedule,playerHighlights}=require('../lib/matchup-insights');
+const {createInsights,rankInjuries,athleteId,commonOpponents,normalizeSchedule}=require('../lib/matchup-insights');
 const db=new Database(':memory:');
 db.exec('CREATE TABLE games (id TEXT, season INTEGER, season_type INTEGER, week INTEGER, game_date TEXT, away_team TEXT, home_team TEXT, away_score INTEGER, home_score INTEGER, status TEXT)');
 const insert=db.prepare('INSERT INTO games VALUES (@id,@season,@season_type,@week,@game_date,@away_team,@home_team,@away_score,@home_score,@status)');
@@ -57,11 +57,12 @@ service.ingestScoreboard(bootstrap);
  try {
   const result=await service.get('target');
   assert.equal(result.meetings.length,1);assert.equal(result.meetings[0].result,'T');assert.equal(result.meetings[0].id,'meeting');
-  assert.equal(result.commonOpponents.length,1);assert.equal(result.injuries.available,true);
-  assert.equal(result.injuries.teams[0].players[0].id,'qb');assert.ok(result.injuries.teams[0].players.find(p=>p.id==='removed').key);
-  assert.equal(result.watch.teams[0].players[0].name,'Previous QB');
-  assert.equal(result.watch.teams[0].players[0].metrics[1].display,'108.2');
-  assert.ok(result.watch.teams[0].players.some(p=>p.name==='Defender'));
+  assert.equal(result.commonOpponents.length,1);assert.equal(result.availability.teams[0].reportAvailable,true);
+  assert.equal(result.availability.teams[0].injuries[0].id,'qb');assert.ok(result.availability.teams[0].injuries.find(p=>p.id==='removed').key);
+  assert.equal(result.availability.teams[0].quarterbacks.primary.name,'Starter QB');
+  assert.equal(result.availability.teams[0].quarterbacks.replacement,null);
+  assert.equal(result.availability.teams[0].quarterbacks.primary.metrics.length,0);
+  assert.ok(result.availability.teams[0].highlights.some(p=>p.name==='Defender'));
   assert.ok(urls.every(url=>!url.includes('/summary?') && !url.includes('/teams?')));
   const count=requests;await service.get('target');assert.equal(requests,count);
   // A locally complete season needs no historical schedule request.
@@ -76,15 +77,15 @@ service.ingestScoreboard(bootstrap);
   assert.ok(!coveredUrls.some(url=>url.includes('/schedule?season=2025&')));
   covered.close();coveredDb.close();
   assert.equal(await service.get('unknown'),null);
-  const old=await service.get('meeting');assert.equal(old.injuries.available,false);
+  const old=await service.get('meeting');assert.equal(old.availability.teams[0].missing,true);
   const failure=createInsights({db,now:()=>kickoff-24*60*60*1000,fetchJson:async()=>{throw new Error('Offline');}});
   const offline=await failure.get('target');assert.equal(offline.commonOpponents.length,1);assert.equal(offline.meetings.length,1);assert.ok(offline.warnings.length);
   const wrongYear=createInsights({db,now:()=>clock,fetchJson:async url=>url.includes('/injuries')?{season:{year:2025}}:responses(url)});
   wrongYear.ingestScoreboard(bootstrap);
-  assert.equal((await wrongYear.get('target')).injuries.available,false);
+  assert.equal((await wrongYear.get('target')).availability.teams[0].reportAvailable,false);
   assert.equal(JSON.stringify(db.prepare('SELECT * FROM games').all()),snapshot);
   // A stale injury report remains useful if ESPN is offline, and retries are bounded.
-  clock+=11*60*1000;
+  clock+=7*60*60*1000;
   const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'nfl-insights-'));
   try {
@@ -93,9 +94,9 @@ service.ingestScoreboard(bootstrap);
    first.ingestScoreboard(bootstrap);await first.get('target');first.close();
    const before=upstream;
    const restored=createInsights({db,cacheDir:dir,now:()=>clock,fetchJson:async()=>{upstream++;throw new Error('Offline');}});
-   const warm=await restored.get('target');assert.equal(upstream,before);assert.equal(warm.watch.teams[0].players.length,2);
-   clock+=11*60*1000;
-   const stale=await restored.get('target');assert.equal(stale.injuries.available,true);assert.ok(stale.warnings.some(w=>w.includes('saved data')));
+   const warm=await restored.get('target');assert.equal(upstream,before);assert.equal(warm.availability.teams[0].highlights.length,1);
+   clock+=7*60*60*1000;
+   const stale=await restored.get('target');assert.equal(stale.availability.teams[0].reportAvailable,true);assert.ok(stale.warnings.some(w=>w.includes('saved data')));
    const after=upstream;await restored.get('target');assert.equal(upstream,after);restored.close();
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
   failure.close();wrongYear.close();

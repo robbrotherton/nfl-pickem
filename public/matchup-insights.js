@@ -46,62 +46,80 @@
         const opponent=node('span',undefined,'insight-opponent');
         opponent.append(node('span',game.home?'vs':'@','insight-location'),teamLabel(data,game.opponent,true));
         row.append(opponent,node('span',meta(game),'insight-game-meta'));
+        const qb=game.quarterback;
+        const text=qb ? `Pregame QB1: ${qb.name} · ${qb.status}${qb.replacement ? ` · Next QB: ${qb.replacement}` : ''}` : 'Pregame QB report not captured.';
+        const context=node('span',text,'insight-game-availability');
+        if(qb) context.title=`Report captured ${new Date(qb.capturedAt).toLocaleString()}; availability is not confirmed participation.`;
+        row.append(context);
         return row;
+    }
+    function statusBadge(status) {
+        const value=String(status || '').toLowerCase();
+        const tone=['out','injured reserve','suspended'].includes(value) ? 'out' : ['questionable','doubtful'].includes(value) ? 'uncertain' : 'other';
+        return node('span',status,`insight-status insight-status-${tone}`);
+    }
+    function injuryRow(player) {
+        const row=node('li',undefined,'insight-player'),line=node('div',undefined,'insight-player-line');
+        line.append(link(player.name,player.source,'insight-player-name'),node('span',player.position || '','insight-position'),statusBadge(player.status));
+        row.append(line,node('p',[player.reason,player.role].filter(Boolean).join(' · '),'insight-player-role'));
+        if(player.comment) row.append(node('p',player.comment,'insight-player-comment'));
+        return row;
+    }
+    function featuredPlayer(player,historical=false) {
+        const row=node('div',undefined,'insight-watch-player');
+        if(/^https:\/\/a\.espncdn\.com\//.test(player.headshot || '')) {
+            const photo=node('img');photo.alt='';photo.src=player.headshot;photo.loading='lazy';photo.className='insight-player-photo';
+            photo.addEventListener('error',()=>photo.remove(),{once:true});row.append(photo);
+        }
+        const body=node('div',undefined,'insight-watch-body'),line=node('div',undefined,'insight-player-line');
+        line.append(link(player.name,player.source,'insight-player-name'),node('span',player.position,'insight-position'));
+        if(player.status) line.append(statusBadge(player.status));
+        body.append(line,node('p',player.label,'insight-player-role'));
+        if(!player.status) body.append(node('p',player.availability,'insight-player-role'));
+        for(const stat of player.metrics) body.append(node('p',`${stat.display} · ${stat.label}`,'insight-watch-stat'));
+        if(!historical && !player.metrics.length) body.append(node('p','No regular-season stats available.','insight-note'));
+        if(player.reason) body.append(node('p',player.reason,'insight-player-role'));
+        row.append(body);return row;
+    }
+    function renderAvailability(container,data) {
+        const availability=data.availability;
+        const sectionElement=section(container,availability.historical?'Pregame player availability':'Player availability',availability.note);
+        const grid=node('div',undefined,'insight-team-grid');sectionElement.append(grid);
+        for(const team of availability.teams) {
+            const card=node('article',undefined,'insight-team-card insight-availability-card');grid.append(card);
+            const title=node('h5');title.append(teamLabel(data,team.name));card.append(title);
+            if(team.missing) {empty(card,'No pregame report was captured for this matchup.');continue;}
+            const time=value=>new Date(value).toLocaleString();
+            if(team.historical) card.append(node('p',`Saved before kickoff ${time(team.capturedAt)}`,'insight-note'));
+            const updates=[team.injuryUpdatedAt?`Injuries ${time(team.injuryUpdatedAt)}`:'Injury report unavailable',
+                team.depthUpdatedAt?`Depth chart ${time(team.depthUpdatedAt)}`:'Depth chart unavailable'];
+            card.append(node('p',updates.join(' · '),'insight-note insight-data-times'));
+            card.append(node('h6','Quarterbacks','insight-group-title'));
+            if(team.quarterbacks.primary) card.append(featuredPlayer(team.quarterbacks.primary,team.historical));
+            else empty(card,'A first-string QB could not be identified from the depth chart.');
+            if(team.quarterbacks.replacement) card.append(featuredPlayer(team.quarterbacks.replacement,team.historical));
+            if(team.quarterbacks.note) card.append(node('p',team.quarterbacks.note,'insight-qb-note'));
+            if(team.highlights.length) {
+                card.append(node('h6','Starters to watch','insight-group-title'));
+                if(team.statsUpdatedAt) card.append(node('p',`Season stats updated ${time(team.statsUpdatedAt)}`,'insight-note'));
+                team.highlights.forEach(player=>card.append(featuredPlayer(player)));
+            }
+            if(!team.depthAvailable) empty(card,'Starter highlights are unavailable without a depth chart.');
+            if(team.absences.length) {
+                card.append(node('h6','Other key absences','insight-group-title'));
+                const list=node('ul',undefined,'insight-player-list');team.absences.forEach(player=>list.append(injuryRow(player)));card.append(list);
+            }
+            if(team.injuries.length) {
+                const details=node('details',undefined,'insight-full-report');details.append(node('summary',`Full injury report (${team.injuries.length})`));
+                const list=node('ul',undefined,'insight-player-list');team.injuries.forEach(player=>list.append(injuryRow(player)));details.append(list);card.append(details);
+            }
+        }
     }
     function render(container,data) {
         container.replaceChildren();
         const heading=node('div',undefined,'insight-heading');
         heading.append(node('h3','Matchup insights'),node('span','ESPN · Regular-season results','insight-kicker'));container.append(heading);
-        const injury=section(container,'Key absences',data.injuries.note);
-        if(data.injuries.updatedAt) injury.append(node('p',`Report updated ${new Date(data.injuries.updatedAt).toLocaleString()}`,'insight-note'));
-        function playerRow(player) {
-            const row=node('li',undefined,'insight-player');
-            const line=node('div',undefined,'insight-player-line');
-            line.append(link(player.name,player.source,'insight-player-name'),node('span',player.position || '','insight-position'));
-            const status=player.status.toLowerCase();
-            const tone=status==='out' || status==='injured reserve' ? 'out' : status==='questionable' || status==='doubtful' ? 'uncertain' : 'other';
-            line.append(node('span',player.status,`insight-status insight-status-${tone}`));row.append(line);
-            row.append(node('p',[player.reason,player.role].filter(Boolean).join(' · '),'insight-player-role'));
-            if(player.comment) row.append(node('p',player.comment,'insight-player-comment'));
-            return row;
-        }
-        const injuryGrid=node('div',undefined,'insight-team-grid');injury.append(injuryGrid);
-        for(const team of data.injuries.teams) {
-            const card=node('article',undefined,'insight-team-card');injuryGrid.append(card);
-            const title=node('h5');title.append(teamLabel(data,team.name));card.append(title);
-            if(!team.available) {empty(card,'Injury report unavailable for this team.');continue;}
-            const key=team.players.filter(player=>player.key).slice(0,5);
-            const list=node('ul',undefined,'insight-player-list');key.forEach(player=>list.append(playerRow(player)));card.append(list);
-            if(!key.length) empty(card,team.players.length ? 'No key absences confirmed. Check the full report for players with unconfirmed roles.' : 'No players listed in this report.');
-            if(team.players.length) {
-                const details=node('details',undefined,'insight-full-report');details.append(node('summary',`Full injury report (${team.players.length})`));
-                const full=node('ul',undefined,'insight-player-list');team.players.forEach(player=>full.append(playerRow(player)));details.append(full);card.append(details);
-            }
-            card.append(node('p',team.roleNote,'insight-note'));
-        }
-        if(data.watch?.teams.length) {
-            const watch=section(container,'Players to watch',data.watch.note);
-            const grid=node('div',undefined,'insight-team-grid');watch.append(grid);
-            for(const team of data.watch.teams) {
-                const card=node('article',undefined,'insight-team-card');grid.append(card);
-                const title=node('h5');title.append(teamLabel(data,team.name));card.append(title);
-                if(team.updatedAt) card.append(node('p',`Stats updated ${new Date(team.updatedAt).toLocaleString()}`,'insight-note'));
-                for(const player of team.players) {
-                    const row=node('div',undefined,'insight-watch-player');
-                    if(/^https:\/\/a\.espncdn\.com\//.test(player.headshot || '')) {
-                        const photo=node('img');photo.alt='';photo.src=player.headshot;photo.loading='lazy';photo.className='insight-player-photo';
-                        photo.addEventListener('error',()=>photo.remove(),{once:true});row.append(photo);
-                    }
-                    const body=node('div',undefined,'insight-watch-body');
-                    const name=node('div',undefined,'insight-player-line');name.append(link(player.name,player.source,'insight-player-name'),node('span',player.position,'insight-position'));
-                    if(player.status) name.append(node('span',player.status,'insight-status insight-status-uncertain'));
-                    body.append(name,node('p',player.label,'insight-player-role'));
-                    for(const stat of player.metrics) body.append(node('p',`${stat.display}${stat.label===player.label ? '' : ' · '+stat.label}`,'insight-watch-stat'));
-                    row.append(body);card.append(row);
-                }
-                if(!team.players.length) empty(card,'Player highlights are unavailable in the saved team data.');
-            }
-        }
+        renderAvailability(container,data);
         const meetings=section(container,'Recent meetings',data.historyNote);
         const history=node('div',undefined,'insight-meetings');meetings.append(history);
         data.meetings.forEach(game=>{

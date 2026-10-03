@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "backup": "node scripts/backup.js",
-    "test": "node tests/tiebreakers.test.mjs && node tests/seasons.test.cjs && node tests/season-api.test.mjs && node tests/matchup-insights.test.cjs",
+    "test": "node tests/tiebreakers.test.mjs && node tests/seasons.test.cjs && node tests/season-api.test.mjs && node tests/matchup-insights.test.cjs && node tests/player-context.test.cjs && node tests/availability-history.test.cjs",
     "preview": "node scripts/preview.js"
   },
   "keywords": [
