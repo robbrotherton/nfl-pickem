@@ -62,6 +62,10 @@
         const row=node('li',undefined,'insight-player'),line=node('div',undefined,'insight-player-line');
         line.append(link(player.name,player.source,'insight-player-name'),node('span',player.position || '','insight-position'),statusBadge(player.status));
         row.append(line,node('p',[player.reason,player.role].filter(Boolean).join(' · '),'insight-player-role'));
+        if(player.contributions?.length) {
+            row.append(node('p',player.contributions.map(stat=>`${stat.label} · ${stat.display}`).join(' / '),'insight-watch-stat'));
+            if(player.statsUpdatedAt) row.append(node('p',`Stats as of ${new Date(player.statsUpdatedAt).toLocaleString()}`,'insight-note'));
+        }
         if(player.comment) row.append(node('p',player.comment,'insight-player-comment'));
         return row;
     }
@@ -94,6 +98,10 @@
             const updates=[team.injuryUpdatedAt?`Injuries ${time(team.injuryUpdatedAt)}`:'Injury report unavailable',
                 team.depthUpdatedAt?`Depth chart ${time(team.depthUpdatedAt)}`:'Depth chart unavailable'];
             card.append(node('p',updates.join(' · '),'insight-note insight-data-times'));
+            if(team.absences.length) {
+                card.append(node('h6','Key injuries','insight-group-title'));
+                const list=node('ul',undefined,'insight-player-list');team.absences.forEach(player=>list.append(injuryRow(player)));card.append(list);
+            }
             card.append(node('h6','Quarterbacks','insight-group-title'));
             if(team.quarterbacks.primary) card.append(featuredPlayer(team.quarterbacks.primary,team.historical));
             else empty(card,'A first-string QB could not be identified from the depth chart.');
@@ -105,10 +113,6 @@
                 team.highlights.forEach(player=>card.append(featuredPlayer(player)));
             }
             if(!team.depthAvailable) empty(card,'Starter highlights are unavailable without a depth chart.');
-            if(team.absences.length) {
-                card.append(node('h6','Other key absences','insight-group-title'));
-                const list=node('ul',undefined,'insight-player-list');team.absences.forEach(player=>list.append(injuryRow(player)));card.append(list);
-            }
             if(team.injuries.length) {
                 const details=node('details',undefined,'insight-full-report');details.append(node('summary',`Full injury report (${team.injuries.length})`));
                 const list=node('ul',undefined,'insight-player-list');team.injuries.forEach(player=>list.append(injuryRow(player)));details.append(list);card.append(details);

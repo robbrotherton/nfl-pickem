@@ -58,7 +58,7 @@ service.ingestScoreboard(bootstrap);
   const result=await service.get('target');
   assert.equal(result.meetings.length,1);assert.equal(result.meetings[0].result,'T');assert.equal(result.meetings[0].id,'meeting');
   assert.equal(result.commonOpponents.length,1);assert.equal(result.availability.teams[0].reportAvailable,true);
-  assert.equal(result.availability.teams[0].injuries[0].id,'qb');assert.ok(result.availability.teams[0].injuries.find(p=>p.id==='removed').key);
+  assert.equal(result.availability.teams[0].injuries[0].id,'removed');assert.ok(result.availability.teams[0].injuries.find(p=>p.id==='qb').key);
   assert.equal(result.availability.teams[0].quarterbacks.primary.name,'Starter QB');
   assert.equal(result.availability.teams[0].quarterbacks.replacement,null);
   assert.equal(result.availability.teams[0].quarterbacks.primary.metrics.length,0);

@@ -29,8 +29,21 @@ assert.equal(returned.quarterbacks.replacement, null);
 assert.deepEqual(returned.highlights.map(player => player.id), ['3', '5']);
 assert.ok(!returned.highlights.some(player => player.id === '2'));
 const reserveOut = context([{ athlete: backup, status: 'Out' }], { roles: new Map([['2', 'Saved team contributor']]) });
-assert.equal(reserveOut.absences.length, 0, 'a backup passing leader is not a key starter absence');
+assert.equal(reserveOut.absences[0].id, '2', 'an injured major passing contributor remains prominent');
+assert.equal(reserveOut.absences[0].contributions[0].label, '#1 in team passing yards');
 assert.equal(reserveOut.injuries.length, 1, 'backup injuries remain in the full report');
+const reserveReceiverOut = context([{ athlete: reserve, status: 'Out' }]);
+assert.equal(reserveReceiverOut.absences[0].id, '4');
+assert.equal(reserveReceiverOut.absences[0].contributions[0].label, '#1 in team receiving yards');
+assert.ok(!reserveReceiverOut.highlights.some(player=>player.id==='4'));
+const minor = athlete('7', 'Little-used reserve', 'WR');
+const smallCategories = [...categories.filter(c=>c.name!=='receivingLeader'), { name:'receivingLeader', leaders:[
+    leader(receiver, 1000, '1000 YDS'), leader(minor, 10, '10 YDS')
+]}];
+assert.equal(context([{athlete:minor,status:'Out'}],{categories:smallCategories,roles:new Map([['7','Saved team contributor']])}).absences.length,0);
+assert.equal(context([{athlete:backup,status:'Active'}]).absences.length,0);
+assert.equal(context([{athlete:reserve,status:'Questionable'}]).absences[0].status,'Questionable');
+assert.equal(context([{athlete:reserve,status:'Out'}],{depth:null}).absences[0].id,'4', 'injured contributors do not require a depth chart');
 
 const absent = context([{ athlete: starter, status: 'Out', details: { type: 'Hamstring' } }]);
 assert.equal(absent.quarterbacks.primary.status, 'Out');

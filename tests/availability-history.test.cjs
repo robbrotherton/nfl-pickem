@@ -13,13 +13,15 @@ const kickoff = Date.parse(game.game_date);
 let clock = kickoff - 24 * 60 * 60 * 1000, out = true;
 const first = { id: '1', displayName: 'First QB', position: { abbreviation: 'QB' } };
 const backup = { id: '2', displayName: 'Backup QB', position: { abbreviation: 'QB' } };
+const missingReceiver = { id: '3', displayName: 'Injured receiving leader', position: { abbreviation: 'WR' } };
 const depth = { season: { year: 2026 }, depthchart: [{ positions: { qb: { position: { abbreviation: 'QB' }, athletes: [first, backup] } } }] };
-const categories = [{ name: 'passingLeader', leaders: [{ athlete: backup, displayValue: '500 YDS, 3 TD' }, { athlete: first, displayValue: '200 YDS' }] }];
+const categories = [{ name: 'passingLeader', leaders: [{ athlete: backup, displayValue: '500 YDS, 3 TD' }, { athlete: first, displayValue: '200 YDS' }] },
+    { name: 'receivingLeader', leaders: [{ athlete: missingReceiver, value: 300, displayValue: '30 REC, 300 YDS' }] }];
 const urls = [];
 async function fetchJson(url) {
     urls.push(url);
     if (url.includes('/injuries')) return { season: { year: 2026 }, injuries: ['10', '20'].map((id, index) => ({ id,
-        displayName: index ? 'Team B' : 'Team A', injuries: [{ athlete: first, status: out ? 'Out' : 'Active' }] })) };
+        displayName: index ? 'Team B' : 'Team A', injuries: [{ athlete: first, status: out ? 'Out' : 'Active' }, { athlete: missingReceiver, status: 'Out' }] })) };
     if (url.includes('/depthcharts')) return depth;
     if (url.includes('/leaders?')) return { categories };
     if (url.includes('/schedule?')) return { requestedSeason: { year: Number(new URL(url).searchParams.get('season')), type: 2 }, events: [] };
@@ -43,6 +45,7 @@ let service;
         const current = await service.get('100');
         assert.equal(current.availability.teams[0].quarterbacks.primary.status, 'Out');
         assert.equal(current.availability.teams[0].quarterbacks.replacement.metrics[0].display, '500 YDS, 3 TD');
+        assert.equal(current.availability.teams[0].absences[0].id,'3');
         assert.equal(urls.filter(url => url.includes('/injuries')).length, 1, 'modal reuses scoreboard capture');
         assert.equal(JSON.stringify(db.prepare('SELECT * FROM games').all()), beforeGames);
 
@@ -52,12 +55,14 @@ let service;
         const beforeWindow = injuryCalls();
         await service.ingestScoreboard(scoreboard(game));
         assert.equal(injuryCalls(), beforeWindow + 1);
+        assert.equal(urls.filter(url=>url.includes('/leaders?')).length,2,'background capture reuses cached stats without new leader requests');
         clock += 10 * 60 * 1000;
         await service.get('100');
         assert.equal(injuryCalls(), beforeWindow + 1, 'kickoff-window report still caches for thirty minutes');
 
         const metadata = new Database(path.join(dir, 'insights.db'), { readonly: true });
         const archived = metadata.prepare("SELECT data FROM availability WHERE game_id='100' AND team_id='10'").get().data;
+        assert.equal(JSON.parse(archived).absences[0].id,'3','nonstarter contributor injuries survive subsequent background captures');
         assert.equal(JSON.parse(archived).quarterbacks.replacement.metrics.length, 0, 'archive keeps availability, not mutable season totals');
         clock = kickoff + 60 * 60 * 1000; out = false;
         const before = urls.length;
