@@ -1566,3 +1566,41 @@ th {
 #matchupInsights .insight-qb-note { border-left: 3px solid #dba14a; background: #fff7e8; padding: 9px 12px; font-size: .82rem; line-height: 1.5; color: #71572e; }
 #matchupInsights .insight-data-times { line-height: 1.5; overflow-wrap: anywhere; }
 #matchupInsights .insight-game-availability { grid-column: 2 / -1; color: #687889; font-size: .75rem; line-height: 1.4; }
+
+
+.score-refresh-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+.score-refresh-button:hover { opacity: .8; }
+.score-refresh-button:disabled { cursor: wait; }
+.score-refresh-icon {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.is-refreshing .score-refresh-icon { animation: score-refresh-spin 1s linear infinite; }
+.score-freshness { display: block; margin-top: 4px; font-size: 10px; font-weight: normal; opacity: .8; }
+.score-freshness[hidden] { display: none; }
+.game-score { display: inline-block; border-radius: 4px; }
+.score-changed { animation: score-change-pulse 5s ease-out; }
+@keyframes score-refresh-spin { to { transform: rotate(360deg); } }
+@keyframes score-change-pulse {
+    0%, 45% { background: #fde68a; color: #713f12; box-shadow: 0 0 0 4px #fde68a80; transform: scale(1.15); }
+    100% { background: transparent; box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .is-refreshing .score-refresh-icon { animation: none; }
+    .score-changed { animation: none; background: #fde68a; color: #713f12; }
+}

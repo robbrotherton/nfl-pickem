@@ -160,7 +160,9 @@ const game = (id, season, type, week = 1) => ({
     urls.length=0;
     await assert.rejects(vm.runInContext('fetchAndCacheGames(1,2026,2)',client),/season type/);
     assert.equal(urls.length,1); // No writes on a mismatched response.
-    await assert.rejects(vm.runInContext('forceRefreshSchedule()',client),/season type/);
+    await vm.runInContext('forceRefreshSchedule()',client);
+    assert.equal(vm.runInContext('scoreRefreshError',client),true);
+    assert.equal(vm.runInContext('scoreRefresh',client),null);
     assert.ok(urls.every(([,options])=>options?.method!=='DELETE'));
     vm.runInContext('currentSeason=2020;cachedSeasonInfo={seasonYear:2026,seasonType:2,weekNumber:4}',client);
     assert.equal(await vm.runInContext('getCurrentWeekSelection()',client),'2:17');
@@ -172,6 +174,21 @@ const game = (id, season, type, week = 1) => ({
     urls.length=0;
     await vm.runInContext('getSeasonCalendar(2020)',client);
     assert.match(urls[0],/dates=2020/);
+    const refreshButton = { classList: { toggle() {} }, setAttribute() {} };
+    const freshness = {};
+    elements.set('scoreRefreshButton', refreshButton);
+    elements.set('scoreFreshness', freshness);
+    vm.runInContext("displayedScoreGames=[{status:'scheduled'}];updateScoreRefreshHeader()",client);
+    assert.equal(freshness.hidden,true);
+    vm.runInContext("scoreRefreshError=false;displayedScoreGames=[{status:'in_progress',last_updated:new Date(Date.now()-120000).toISOString()}];updateScoreRefreshHeader()",client);
+    assert.equal(freshness.hidden,false);
+    assert.match(freshness.textContent,/Scores checked 2m ago/);
+    vm.runInContext("scoreRefresh={loadId:scheduleLoadId};updateScoreRefreshHeader()",client);
+    assert.equal(refreshButton.disabled,true);
+    assert.equal(freshness.textContent,'Checking scores…');
+    vm.runInContext("scoreRefresh=null;displayedScoreGames=[{status:'final'}];updateScoreRefreshHeader()",client);
+    assert.equal(refreshButton.disabled,false);
+    assert.equal(freshness.hidden,true);
     const now = Date.parse('2026-10-03T12:00:00Z');
     client.Date = class extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } };
     const upcoming = { ...game('upcoming',2026,2,4), game_date:'2026-10-04T17:00:00Z' };

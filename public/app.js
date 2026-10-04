@@ -9,6 +9,31 @@ let currentSeason = NFLSeason.fallbackSeasonYear();
 const seasonCalendars = new Map();
 const storedWeekSelections = new Map();
 let scheduleLoadId = 0;
+let scoreRefresh = null;
+let displayedScoreContext = null;
+let displayedScores = new Map();
+let displayedScoreGames = [];
+let scoreRefreshError = false;
+
+function updateScoreRefreshHeader() {
+    const button = document.getElementById('scoreRefreshButton');
+    if (!button) return;
+    button.disabled = !!scoreRefresh;
+    button.classList.toggle('is-refreshing', !!scoreRefresh);
+    button.setAttribute('aria-label', scoreRefresh ? 'Checking scores' : 'Refresh scores from ESPN');
+    const note = document.getElementById('scoreFreshness');
+    if (!note) return;
+    note.hidden = !displayedScoreGames.some(game => game.status === 'in_progress');
+    const timestamps = displayedScoreGames.filter(game => game.status === 'in_progress').map(game => {
+        const value = game.last_updated;
+        return value ? Date.parse(value.includes('T') ? value : value.replace(' ', 'T') + 'Z') : NaN;
+    });
+    const checkedAt = Math.min(...timestamps);
+    const seconds = Math.max(0, Math.floor((Date.now() - checkedAt) / 1000));
+    const age = seconds < 60 ? 'just now' : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86400)}d ago`;
+    note.textContent = scoreRefresh ? 'Checking scores…' : scoreRefreshError ? 'Check failed · click to retry' : Number.isFinite(checkedAt) ? `Scores checked ${age}` : 'Scores not yet checked';
+}
+
 let adminMode = false; // Allow picks for past games
 let cachedSeasonInfo = null;
 let leaderboardSeasonTypeFilter = 'all';
@@ -19,6 +44,7 @@ const weekValueLabelMap = new Map();
 // ========================================
 
 window.addEventListener('DOMContentLoaded', async () => {
+    setInterval(updateScoreRefreshHeader, 15000);
     fetch('/api/app-info').then(response => response.json()).then(info => {
         const banner = document.getElementById('previewBanner');
         if (banner) banner.hidden = !info.preview;
@@ -463,6 +489,8 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
         return { logo, wordmark };
     };
 
+    const checkedAt = new Date().toISOString();
+
     // Process and cache each game
     const games = [];
     for (const event of data.events) {
@@ -477,6 +505,7 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
         const homeLogos = getTeamLogos(homeTeam);
 
         const gameData = {
+            last_updated: checkedAt,
             id: event.id,
             season: apiSeason, // Use correct season from API
             season_type: apiSeasonType, // Add season_type from API
@@ -547,10 +576,29 @@ async function forceRefreshSchedule() {
     const week = weekInfo.week;
     const seasonType = weekInfo.type;
     
-    // Upsert only after ESPN's context is verified; retain the cache on failure.
-    const loadId = scheduleLoadId;
-    const games = await fetchAndCacheGames(week, season, seasonType);
-    if (scheduleLoadId === loadId) await loadSchedule({ games });
+    await refreshScheduleScores(week, season, seasonType, scheduleLoadId);
+}
+
+async function refreshScheduleScores(week, season, seasonType, loadId) {
+    if (scoreRefresh?.loadId === loadId) return;
+    const request = { loadId };
+    scoreRefresh = request;
+    scoreRefreshError = false;
+    updateScoreRefreshHeader();
+    try {
+        const games = await fetchAndCacheGames(week, season, seasonType);
+        if (!games?.length) throw new Error('No scores returned.');
+        if (scheduleLoadId !== loadId) return;
+        await loadSchedule({ games });
+    } catch (error) {
+        if (scheduleLoadId === loadId) scoreRefreshError = true;
+        console.warn('Score refresh failed; keeping stored schedule:', error);
+    } finally {
+        if (scoreRefresh === request) {
+            scoreRefresh = null;
+            updateScoreRefreshHeader();
+        }
+    }
 }
 
 async function scoreCompletedGames(games) {
@@ -880,7 +928,11 @@ async function loadSchedule({ games: refreshedGames } = {}) {
     // Reset admin mode when changing weeks
     adminMode = false;
     
-    if (!refreshedGames) content.innerHTML = '<div class="loading">Loading schedule...</div>';
+    if (!refreshedGames) {
+        scoreRefresh = null;
+        scoreRefreshError = false;
+        content.innerHTML = '<div class="loading">Loading schedule...</div>';
+    }
     
     try {
         // Get week number and season type
@@ -937,9 +989,7 @@ async function loadSchedule({ games: refreshedGames } = {}) {
         document.querySelector('.week-title-row').style.display = 'flex';
 
         if (!refreshedGames && shouldRefreshGames(games)) {
-            fetchAndCacheGames(week, season, seasonType).then(updated => {
-                if (updated?.length && loadId === scheduleLoadId) return loadSchedule({ games: updated });
-            }).catch(error => console.warn('Score refresh failed; keeping stored schedule:', error));
+            void refreshScheduleScores(week, season, seasonType, loadId);
         }
         
     } catch (error) {
@@ -953,13 +1003,17 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
     const allPicks = await loadPicksForWeek(week, season, seasonType);
     const playerNames = weekPlayers.map(p => p.player_name);
     
-    // Check if any games are not final
-    const hasInProgressGames = games.some(g => g.status !== 'final');
-    const headerText = hasInProgressGames ? 'Game (click to refresh)' : 'Game';
-    
+    const scoreContext = `${season}:${seasonType}:${week}`;
+    const previousScores = displayedScoreContext === scoreContext ? displayedScores : new Map();
+    const scoreMarkup = (game, side) => {
+        const value = game[`${side}_score`];
+        const previous = previousScores.get(String(game.id));
+        const changed = previous && previous[side] != null && value != null && Number(previous[side]) !== Number(value);
+        return `<span class="team-record game-score${changed ? ' score-changed' : ''}">(${value})</span>`;
+    };
     let html = '<table><thead><tr>';
-    html += `<th class="team-column clickable-header" onclick="forceRefreshSchedule()" title="Refresh scores from ESPN">${headerText}</th>`;
-    
+    html += `<th class="team-column"><button id="scoreRefreshButton" class="score-refresh-button" onclick="forceRefreshSchedule()" title="Refresh scores from ESPN" aria-label="Refresh scores from ESPN">Game <svg class="score-refresh-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 17.9 17"/></svg></button><span id="scoreFreshness" class="score-freshness" role="status" hidden></span></th>`;
+
     playerNames.forEach(name => {
         html += `<th class="pick-column"><div class="member-name">${name}</div></th>`;
     });
@@ -1019,7 +1073,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
                     ${game.away_logo ? `<img src="${game.away_logo}" alt="${game.away_abbr || game.away_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
                     <div class="team-details">
                         <span class="team-name ${game.winner === game.away_team ? 'winner' : ''}">${game.away_abbr || game.away_team}</span>
-                        ${game.status === 'final' || game.status === 'in_progress' ? `<span class="team-record">(${game.away_score})</span>` : game.away_record ? `<span class="team-record">${game.away_record}</span>` : ''}
+                        ${game.status === 'final' || game.status === 'in_progress' ? scoreMarkup(game, 'away') : game.away_record ? `<span class="team-record">${game.away_record}</span>` : ''}
                     </div>
                 </div>
                 <span class="vs">@</span>
@@ -1027,7 +1081,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
                     ${game.home_logo ? `<img src="${game.home_logo}" alt="${game.home_abbr || game.home_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
                     <div class="team-details">
                         <span class="team-name ${game.winner === game.home_team ? 'winner' : ''}">${game.home_abbr || game.home_team}</span>
-                        ${game.status === 'final' || game.status === 'in_progress' ? `<span class="team-record">(${game.home_score})</span>` : game.home_record ? `<span class="team-record">${game.home_record}</span>` : ''}
+                        ${game.status === 'final' || game.status === 'in_progress' ? scoreMarkup(game, 'home') : game.home_record ? `<span class="team-record">${game.home_record}</span>` : ''}
                     </div>
                 </div>
             </div>
@@ -1103,6 +1157,13 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
     
     if (loadId !== scheduleLoadId) return;
     document.getElementById('content').innerHTML = html;
+    document.querySelectorAll('.score-changed').forEach(score => {
+        setTimeout(() => score.classList.remove('score-changed'), 5100);
+    });
+    displayedScoreContext = scoreContext;
+    displayedScores = new Map(games.map(game => [String(game.id), { away: game.away_score, home: game.home_score }]));
+    displayedScoreGames = games;
+    updateScoreRefreshHeader();
 }
 
 async function renderWeeklyLeaderboard(season, week, seasonType) {
