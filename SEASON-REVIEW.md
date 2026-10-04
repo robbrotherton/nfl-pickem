@@ -1,7 +1,8 @@
 # Season handling review
 
-Changes are on `fix/season-boundaries` in `/home/rb/nfl-pickem-season-fixes`.
-The running checkout `/home/rb/nfl-pickem`, its database, and its process have not been changed or restarted. These fixes are not deployed.
+These fixes were developed on `fix/season-boundaries`, merged into `main`, and deployed from `/home/rb/projects/nfl-pickem` on October 3, 2026. The temporary worktree was retired on October 4, 2026; its files are archived locally under `backups/worktree-retirement-2026-10-04/`.
+
+The findings and validation below record the original review. See [the deployment record](MATCHUP-PREVIEW.md) for the subsequent production rollout.
 
 ## Findings and fixes
 
@@ -19,7 +20,7 @@ The running checkout `/home/rb/nfl-pickem`, its database, and its process have n
 
 A read-only check of the live database found zero picks whose stored year/week/type disagreed with their game and zero games with missing season types. This checks stored consistency; it does not independently verify every game against ESPN.
 
-No schema change or production data repair is included. The review covers season context and the affected requests; it is not an exhaustive audit of scoring or playoff rules. A real browser smoke test and production rollout remain separate steps.
+No schema change or production data repair is included. The review covers season context and the affected requests; it is not an exhaustive audit of scoring or playoff rules. Subsequent browser smoke testing and the production rollout are recorded in `MATCHUP-PREVIEW.md`.
 
 For a manual local preview, install dependencies in this checkout and run with an explicit disposable database and loopback binding:
 

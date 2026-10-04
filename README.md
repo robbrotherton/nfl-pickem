@@ -140,7 +140,7 @@ pm2 delete nfl-pickem   # Remove from PM2
 When you make changes or pull updates from GitHub:
 
 ```bash
-cd ~/nfl-pickem
+cd ~/projects/nfl-pickem
 cp nfl-pickem.db nfl-pickem-backup-$(date +%Y%m%d).db # backup db
 git pull                # Get latest changes
 npm install             # Update dependencies if needed
@@ -244,12 +244,16 @@ The entire application state is in the `nfl-pickem.db` file. To backup:
 
 ```bash
 # Create a backup
-cp ~/nfl-pickem/nfl-pickem.db ~/nfl-pickem-backup-$(date +%Y%m%d).db
+cp ~/projects/nfl-pickem/nfl-pickem.db ~/nfl-pickem-backup-$(date +%Y%m%d).db
 
 # Or copy to another machine
-scp username@server:~/nfl-pickem/nfl-pickem.db ~/backups/
+scp username@server:~/projects/nfl-pickem/nfl-pickem.db ~/backups/
 ```
 
 ## License
 
 Free to use and modify for personal use.
+
+The deployed server checkout is `/home/rb/projects/nfl-pickem`. PM2 runs `nfl-pickem` from this directory; the temporary feature worktrees and preview process have been retired.
+
+See [API calls and schedule loading](API-CALLS.md) for all request triggers, cache lifetimes, and the DB-first page-load policy.

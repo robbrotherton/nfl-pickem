@@ -7,6 +7,8 @@ const API_BASE = ''; // Same origin, no prefix needed
 let currentWeek = null;
 let currentSeason = NFLSeason.fallbackSeasonYear();
 const seasonCalendars = new Map();
+const storedWeekSelections = new Map();
+let scheduleLoadId = 0;
 let adminMode = false; // Allow picks for past games
 let cachedSeasonInfo = null;
 let leaderboardSeasonTypeFilter = 'all';
@@ -22,9 +24,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (banner) banner.hidden = !info.preview;
     }).catch(() => {});
     await initSeasonSelector();
-    ensureSeasonSeeded().catch(error => {
-        console.warn('Season seed check failed:', error);
-    });
     await initWeekSelector();
     await loadSchedule();
 });
@@ -77,6 +76,11 @@ async function initSeasonSelector() {
         currentSeason = currentYear;
     }
     
+    // Stored dates give us season/week selection without waiting for ESPN.
+    if (Number(currentSeason) === currentYear && await loadStoredSeasonContext(currentSeason)) {
+        const [seasonType, weekNumber] = storedWeekSelections.get(currentSeason).split(':').map(Number);
+        cachedSeasonInfo = { seasonYear: currentSeason, seasonType, weekNumber, calendar: null };
+    }
     const preferredSeason = await getPreferredSeasonYear(currentYear);
     if (preferredSeason) {
         const optionValues = Array.from(seasonSelect.options).map(opt => String(opt.value));
@@ -94,11 +98,21 @@ async function initSeasonSelector() {
     resizeSelect(seasonSelect);
 }
 
-async function ensureSeasonSeeded() {
-    const season = currentSeason;
-    if (!season) return;
-    await fetch(`${API_BASE}/api/season/${season}/seed`, { method: 'POST' });
-    await fetch(`${API_BASE}/api/season/${season}/seed?season_type=1`, { method: 'POST' });
+async function loadStoredSeasonContext(season) {
+    try {
+        const response = await fetch(`${API_BASE}/api/games/${season}`);
+        if (!response.ok) return false;
+        const games = await response.json();
+        const selection = NFLSeason.storedWeekSelection(games);
+        if (!selection) return false;
+        storedWeekSelections.set(season, selection);
+        // Standard week labels need no external calendar request.
+        seasonCalendars.set(season, null);
+        return true;
+    } catch (error) {
+        console.warn('Unable to read stored season context:', error);
+        return false;
+    }
 }
 
 async function initWeekSelector() {
@@ -202,6 +216,7 @@ async function changeSeason() {
     if (seasonSelect) {
         currentSeason = parseInt(seasonSelect.value);
         resizeSelect(seasonSelect);
+        await loadStoredSeasonContext(currentSeason);
         await initWeekSelector();
         await loadSchedule();
     }
@@ -326,6 +341,7 @@ function mapPostseasonWeekToValue(weekNumber) {
 }
 
 async function getCurrentWeekSelection() {
+    if (storedWeekSelections.has(currentSeason)) return storedWeekSelections.get(currentSeason);
     const seasonInfo = await getCurrentSeasonInfo();
     if (seasonInfo?.seasonYear && Number(seasonInfo.seasonYear) !== Number(currentSeason)) {
         return Number(currentSeason) < Number(seasonInfo.seasonYear) ? `2:${NFLSeason.weekCount(currentSeason, 2)}` : '2:1';
@@ -413,22 +429,7 @@ function groupWeekOptions(weekOptions) {
 // ========================================
 
 function shouldRefreshGames(cachedGames) {
-    if (!cachedGames || cachedGames.length === 0) return true;
-    
-    // If any game isn't final, refresh
-    if (cachedGames.some(g => g.status !== 'final')) return true;
-    
-    // On game days, refresh if cache is over 1 hour old
-    const now = new Date();
-    const isGameDay = now.getDay() === 0 || now.getDay() === 1 || now.getDay() === 4; // Sun, Mon, Thu
-    
-    if (isGameDay && cachedGames.length > 0) {
-        const newestUpdate = new Date(Math.max(...cachedGames.map(g => new Date(g.last_updated))));
-        const hoursSinceUpdate = (now - newestUpdate) / (1000 * 60 * 60);
-        if (hoursSinceUpdate > 1) return true;
-    }
-    
-    return false;
+    return NFLSeason.shouldRefreshGames(cachedGames);
 }
 
 async function fetchAndCacheGames(week, season, seasonType = 2) {
@@ -527,10 +528,11 @@ async function loadGames(week, season, seasonType = 2) {
     // Try cache first
     let url = `${API_BASE}/api/games/${season}/${week}?season_type=${seasonType}`;
     const response = await fetch(url);
+    if (!response.ok) throw new Error('Unable to load stored schedule.');
     const cachedGames = await response.json();
 
-    // Check if we need to refresh
-    if (shouldRefreshGames(cachedGames)) {
+    // Only a missing schedule blocks on ESPN; existing games render first.
+    if (!cachedGames.length) {
         return await fetchAndCacheGames(week, season, seasonType);
     }
 
@@ -546,10 +548,9 @@ async function forceRefreshSchedule() {
     const seasonType = weekInfo.type;
     
     // Upsert only after ESPN's context is verified; retain the cache on failure.
-    await fetchAndCacheGames(week, season, seasonType);
-
-    // Reload schedule (will now use fresh data from DB)
-    await loadSchedule();
+    const loadId = scheduleLoadId;
+    const games = await fetchAndCacheGames(week, season, seasonType);
+    if (scheduleLoadId === loadId) await loadSchedule({ games });
 }
 
 async function scoreCompletedGames(games) {
@@ -870,7 +871,8 @@ async function exitAdminMode() {
 // SCHEDULE RENDERING
 // ========================================
 
-async function loadSchedule() {
+async function loadSchedule({ games: refreshedGames } = {}) {
+    const loadId = ++scheduleLoadId;
     const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const content = document.getElementById('content');
     const season = currentSeason;
@@ -878,7 +880,7 @@ async function loadSchedule() {
     // Reset admin mode when changing weeks
     adminMode = false;
     
-    content.innerHTML = '<div class="loading">Loading schedule...</div>';
+    if (!refreshedGames) content.innerHTML = '<div class="loading">Loading schedule...</div>';
     
     try {
         // Get week number and season type
@@ -902,7 +904,8 @@ async function loadSchedule() {
         }
         
         // Load games (from cache or ESPN)
-        const games = await loadGames(week, season, seasonType);
+        const games = refreshedGames || await loadGames(week, season, seasonType);
+        if (loadId !== scheduleLoadId) return;
         
         if (!games || games.length === 0) {
             content.innerHTML = `<div class="error">No games found for ${weekLabel}.<br>Try selecting a different week.</div>`;
@@ -919,10 +922,12 @@ async function loadSchedule() {
         await loadPastPlayers();
         
         // Update UI - dropdowns handle the title display
+        if (loadId !== scheduleLoadId) return;
         renderActivePlayersUI(weekPlayers);
         
         // Render schedule
-        await renderScheduleTable(games, weekPlayers, season, week, seasonType);
+        await renderScheduleTable(games, weekPlayers, season, week, seasonType, loadId);
+        if (loadId !== scheduleLoadId) return;
         
         // Update view button states
         document.getElementById('picksViewBtn').classList.add('active');
@@ -930,14 +935,21 @@ async function loadSchedule() {
         
         // Show week navigation row when showing picks
         document.querySelector('.week-title-row').style.display = 'flex';
+
+        if (!refreshedGames && shouldRefreshGames(games)) {
+            fetchAndCacheGames(week, season, seasonType).then(updated => {
+                if (updated?.length && loadId === scheduleLoadId) return loadSchedule({ games: updated });
+            }).catch(error => console.warn('Score refresh failed; keeping stored schedule:', error));
+        }
         
     } catch (error) {
+        if (loadId !== scheduleLoadId) return;
         content.innerHTML = `<div class="error">Error loading schedule: ${error.message}<br>Check console (F12) for details.</div>`;
         console.error('Error:', error);
     }
 }
 
-async function renderScheduleTable(games, weekPlayers, season, week, seasonType) {
+async function renderScheduleTable(games, weekPlayers, season, week, seasonType, loadId) {
     const allPicks = await loadPicksForWeek(week, season, seasonType);
     const playerNames = weekPlayers.map(p => p.player_name);
     
@@ -1089,6 +1101,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType)
     const weeklyLeaderboardHtml = await renderWeeklyLeaderboard(season, week, seasonType);
     html += weeklyLeaderboardHtml;
     
+    if (loadId !== scheduleLoadId) return;
     document.getElementById('content').innerHTML = html;
 }
 
@@ -1326,6 +1339,8 @@ function closeGameHistoryModal(event) {
 // ========================================
 
 async function showLeaderboard() {
+    // A pending score refresh must not replace this view.
+    ++scheduleLoadId;
     const season = currentSeason;
     const seasonTypeQuery = getLeaderboardSeasonTypeQuery();
     const url = seasonTypeQuery

@@ -1,28 +1,22 @@
 # Matchup insights preview
 
-Feature branch: `feature/matchup-insights`, based on the synced `fix/season-boundaries` commit `7fda892`.
-Worktree: `/home/rb/nfl-pickem-matchup-insights`.
+The matchup insights and season fixes are merged into `main` and deployed from `/home/rb/projects/nfl-pickem` on port **3000**. The temporary feature/integration worktrees and PM2 preview process were retired on October 4, 2026. Their files, including the isolated preview database and screenshots, are archived locally under `backups/worktree-retirement-2026-10-04/`.
 
-The running preview is available at **http://192.168.1.192:3101** on the LAN. It has a yellow preview banner. Port **3000** remains the original live app. In VS Code Remote SSH, forward port 3101 to use the preview through localhost.
+A new disposable preview can be started from the main checkout with the command below. It uses loopback port **3101** and a yellow preview banner. In VS Code Remote SSH, forward port 3101 to access it.
 
 ## Data isolation
 
 The preview uses `.preview/nfl-pickem.db`, created with SQLite's online backup API while the source database is opened read-only. The snapshot is reused on restarts. All preview picks, scoring, player changes, and schedule refreshes go to this separate file. Nothing is copied back into production. The database and ESPN metadata are ignored by Git. Pregame history is kept in the separate `.preview/insights-cache/insights.db`; it never changes the picks database schema or game rows.
 
-The launcher sets its own DB_PATH and refuses port 3000, a source/target collision, or a symlinked preview directory/database. The preview has a separate PM2 process named `nfl-pickem-preview`; restarting it does not restart `nfl-pickem`. The preview was not added to PM2's saved startup configuration.
+The launcher sets its own DB_PATH and refuses port 3000, a source/target collision, or a symlinked preview directory/database. The retired preview used a separate PM2 process named `nfl-pickem-preview` and was never added to PM2's saved startup configuration. Production remains managed by `nfl-pickem`.
 
 ```bash
-# Run from this feature worktree (loopback by default):
-npm run preview -- --source-db /home/rb/nfl-pickem/nfl-pickem.db
-
-# Restart the currently running preview after server changes:
-pm2 restart nfl-pickem-preview
-
-# Stop just the preview:
-pm2 stop nfl-pickem-preview
+# Run from the main checkout (loopback by default); stop with Ctrl-C:
+cd /home/rb/projects/nfl-pickem
+npm run preview -- --source-db /home/rb/projects/nfl-pickem/nfl-pickem.db
 ```
 
-Changes in public assets appear on refresh. Server changes require a preview restart. To reset the snapshot, first stop the preview, move its `.preview` directory aside, and start again with the source-db option. Keep test data disposable; it is never merged with live data.
+Changes in public assets appear on refresh. Server changes require restarting the preview command. To reset the snapshot, first stop the preview, move its `.preview` directory aside, and start again with the source-db option. Keep test data disposable; it is never merged with live data.
 
 ## Popup behavior
 
@@ -52,7 +46,7 @@ There is no AI invocation, paid API dependency, or weather feature in this versi
 
 Screenshots are in ignored `.preview` files, including `vikings-qb-desktop.png`, `bears-qb-desktop.png`, and `bears-qb-mobile.png`.
 
-This implementation is integrated into `origin/main` and deployed on port 3000 from release `8402616` as of October 3, 2026. Integration used a separate worktree because the server serves frontend files directly from its checkout. Deployment took consistent online/stopped-app backups before updating files and restarting only `nfl-pickem`. Live desktop/mobile checks passed; all picks, players, weekly player lists, game records, and the database schema were verified against the backup. Only normal game refresh timestamps changed during live checks. Deployment backups and the verification record are in `backups/deploy-2026-10-03T20-17-05-133Z/`, including a backup of the new production metadata/history database. The preview remains separate and available for review.
+This implementation is integrated into `origin/main` and deployed on port 3000 from release `8402616` as of October 3, 2026. Integration used a separate worktree because the server serves frontend files directly from its checkout. Deployment took consistent online/stopped-app backups before updating files and restarting only `nfl-pickem`. Live desktop/mobile checks passed; all picks, players, weekly player lists, game records, and the database schema were verified against the backup. Only normal game refresh timestamps changed during live checks. Deployment backups and the verification record are in `backups/deploy-2026-10-03T20-17-05-133Z/`, including a backup of the new production metadata/history database. The temporary preview was retired after integration; its data is retained in the local worktree retirement archive.
 
 ## Popup requests and cache lifetimes
 

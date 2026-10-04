@@ -172,5 +172,68 @@ const game = (id, season, type, week = 1) => ({
     urls.length=0;
     await vm.runInContext('getSeasonCalendar(2020)',client);
     assert.match(urls[0],/dates=2020/);
-    console.log('seasons.test.cjs: browser and season-context regressions passed');
+    const now = Date.parse('2026-10-03T12:00:00Z');
+    client.Date = class extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } };
+    const upcoming = { ...game('upcoming',2026,2,4), game_date:'2026-10-04T17:00:00Z' };
+    const live = { ...upcoming, status:'in_progress' };
+    const overdue = { ...upcoming, game_date:'2026-10-01T00:00:00Z' };
+    const final = { ...overdue, status:'final', last_updated:'2020-01-01' };
+    assert.equal(seasons.shouldRefreshGames([],now),true);
+    assert.equal(seasons.shouldRefreshGames([upcoming,final],now),false);
+    assert.equal(seasons.shouldRefreshGames([live],now),true);
+    assert.equal(seasons.shouldRefreshGames([overdue],now),true);
+    assert.equal(seasons.shouldRefreshGames([final],now),false);
+    assert.equal(seasons.storedWeekSelection([overdue,upcoming,{...game('next',2026,2,5),game_date:'2026-10-11T17:00:00Z'}],now),'2:4');
+    assert.equal(seasons.storedWeekSelection([{...upcoming,season_type:3,week:1,game_date:'2027-01-10T17:00:00Z'}],Date.parse('2027-01-09')),'3:1');
+
+    // Local season selection/calendar and stored games perform no ESPN requests.
+    client.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>[upcoming]};};
+    urls.length=0;
+    assert.equal(await vm.runInContext('loadStoredSeasonContext(2026)',client),true);
+    await vm.runInContext('getSeasonCalendar(2026)',client);
+    await vm.runInContext('getCurrentWeekSelection()',client);
+    assert.deepEqual(urls,['/api/games/2026']);
+    urls.length=0;
+    await vm.runInContext('loadGames(4,2026,2)',client);
+    assert.deepEqual(urls,['/api/games/2026/4?season_type=2']);
+
+    // A live week renders while ESPN remains pending, and failure retains it.
+    for (const id of ['content','picksViewBtn','leaderboardViewBtn']) elements.set(id,{innerHTML:'',classList:{add(){},remove(){}}});
+    client.document.querySelector=()=>({style:{}});
+    client.rendered=0;
+    vm.runInContext("resizeSelect=()=>{};scoreCompletedGames=async()=>{};loadWeekPlayers=async()=>[];loadPastPlayers=async()=>{};renderActivePlayersUI=()=>{};renderScheduleTable=async()=>{rendered++;document.getElementById('content').innerHTML='stored schedule';}",client);
+    const selector={options:[],appendChild(option){this.options.push(option);},insertBefore(option){this.options.unshift(option);}};
+    elements.set('seasonSelect',selector);
+    client.document.createElement=()=>({});
+    client.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>url==='/api/seasons'?[2026,2025]:[upcoming]};};
+    urls.length=0;
+    await vm.runInContext('cachedSeasonInfo=null;initSeasonSelector()',client);
+    assert.deepEqual(urls,['/api/seasons','/api/games/2026']);
+    assert.equal(await vm.runInContext('getCurrentWeekSelection()',client),'2:4');
+    let rejectRefresh;
+    client.fetch=async url=>{
+        urls.push(url);
+        if(url.startsWith('/api/espn/')) return new Promise((resolve,reject)=>{rejectRefresh=reject;});
+        return {ok:true,json:async()=>[live]};
+    };
+    urls.length=0;
+    await vm.runInContext('loadSchedule()',client);
+    assert.equal(client.rendered,1);
+    assert.equal(elements.get('content').innerHTML,'stored schedule');
+    assert.equal(urls.filter(url=>url.startsWith('/api/espn/')).length,1);
+    rejectRefresh(new Error('ESPN offline'));
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(elements.get('content').innerHTML,'stored schedule');
+
+    // Leaving the week while a refresh runs must not bring the old week back.
+    let resolveRefresh;
+    vm.runInContext('fetchAndCacheGames=()=>new Promise(resolve=>{resolvePendingRefresh=resolve;})',client);
+    await vm.runInContext('loadSchedule()',client);
+    resolveRefresh=client.resolvePendingRefresh;
+    vm.runInContext('scheduleLoadId++',client);
+    const rendered=client.rendered;
+    resolveRefresh([final]);
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(client.rendered,rendered);
+    console.log('seasons.test.cjs: browser, DB-first loading, nonblocking score refresh, offline fallback, and navigation regressions passed');
 })().catch(error => {console.error(error);process.exitCode=1;});

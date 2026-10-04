@@ -25,7 +25,30 @@
         }
     }
 
-    const api = { weekCount, fallbackSeasonYear, assertScoreboardContext };
+    function shouldRefreshGames(games, now = Date.now()) {
+        if (!games?.length) return true;
+        // A cached pregame status must not hide games that have since kicked off.
+        return games.some(game => game.status === 'in_progress' ||
+            (game.status !== 'final' && Date.parse(game.game_date) <= now));
+    }
+
+    function storedWeekSelection(games, now = Date.now()) {
+        const weeks = new Map();
+        for (const game of games) {
+            const kickoff = Date.parse(game.game_date);
+            if (!Number.isFinite(kickoff) || ![1, 2, 3].includes(Number(game.season_type))) continue;
+            const value = `${game.season_type}:${game.week}`;
+            const week = weeks.get(value) || { value, start: kickoff, end: kickoff };
+            week.start = Math.min(week.start, kickoff);
+            week.end = Math.max(week.end, kickoff);
+            weeks.set(value, week);
+        }
+        const ordered = [...weeks.values()].sort((a, b) => a.start - b.start);
+        // Keep the current week through its final game and the following day.
+        return (ordered.find(week => week.end + 24 * 60 * 60 * 1000 > now) || ordered.at(-1))?.value || null;
+    }
+
+    const api = { weekCount, fallbackSeasonYear, assertScoreboardContext, shouldRefreshGames, storedWeekSelection };
     root.NFLSeason = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(globalThis);
