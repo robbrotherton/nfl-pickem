@@ -1278,11 +1278,7 @@ th {
         padding: 4px 8px;
     }
 
-    /* Make table scrollable horizontally on mobile */
-    #content {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-    }
+    #content { overflow: visible; }
 
     table {
         font-size: 12px;
@@ -1604,3 +1600,89 @@ th {
     .is-refreshing .score-refresh-icon { animation: none; }
     .score-changed { animation: none; background: #fde68a; color: #713f12; }
 }
+
+
+/* A floating visual header preserves the semantic table below. */
+.matchup-shell { position: relative; margin-top: 20px; width: 100%; min-width: 0; }
+.matchup-start-marker, .matchup-end-marker { position: absolute; width: 1px; height: 1px; pointer-events: none; }
+.matchup-start-marker { top: 0; }
+.matchup-end-marker { bottom: 0; }
+.matchup-header-slot { width: 100%; }
+.matchup-top-mask {
+    position: fixed;
+    left: var(--matchup-header-left);
+    width: var(--matchup-header-width);
+    z-index: 20;
+    background: #f5f5f5;
+    pointer-events: none;
+}
+.matchup-header {
+    position: relative;
+    width: 100%;
+    z-index: 20;
+    overflow: hidden;
+    background: #f8f9fa;
+}
+.matchup-header.is-floating {
+    position: fixed;
+    top: 12px;
+    left: var(--matchup-header-left);
+    width: var(--matchup-header-width);
+}
+.matchup-body-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.matchup-body-scroll:focus-visible { outline: 2px solid #3478b8; outline-offset: 2px; }
+.matchup-table, .matchup-header-table { margin-top: 0; border-collapse: separate; border-spacing: 0; }
+.matchup-header-table { table-layout: fixed; }
+.matchup-table th, .matchup-table td, .matchup-header-table th { border-right: 0; border-bottom: 0; }
+.matchup-table tr > :last-child, .matchup-header-table tr > :last-child { border-right: 1px solid #ddd; }
+.matchup-table tbody tr:last-child td, .matchup-header-table th { border-bottom: 1px solid #ddd; }
+.matchup-table thead th { position: relative; height: 0; padding: 0; border: 0; }
+.matchup-header-table th { position: static; }
+.matchup-table tbody td:first-child, .matchup-header-table th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+}
+.matchup-shell .team-column { min-width: 280px; width: 280px; }
+.matchup-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+@media (max-width: 768px) {
+    .matchup-shell .team-column { min-width: 180px; width: 180px; }
+    .week-title-row { flex-wrap: wrap; }
+    .weekly-leaderboard { overflow-x: auto; }
+}
+@media (max-width: 380px) {
+    .matchup-shell .team-column { min-width: 155px; width: 155px; }
+}
+@media print {
+    .matchup-header-slot, .matchup-top-mask { display: none; }
+    .matchup-body-scroll { overflow: visible; }
+    .matchup-table thead th { height: auto; padding: 6px 4px; border: 1px solid #ddd; }
+    .matchup-table tbody td:first-child { position: static; box-shadow: none; }
+    .matchup-sr-only { position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto; white-space: normal; }
+}
+
+
+/* Dialogs stay within the device viewport, independent of wide table content. */
+.modal { width: 100vw; max-width: 100vw; }
+.modal-content { min-width: 0; max-width: min(400px, calc(100vw - 24px)); }
+#gameHistoryModal .modal-content {
+    width: calc(100vw - 24px);
+    max-width: 1400px;
+    min-width: 0;
+}
+
+.bye-teams { margin: 20px 0; padding: 16px; background: #fff; border: 1px solid #ddd; border-radius: 6px; }
+.bye-teams h2 { margin: 0 0 12px; font-size: 16px; }
+.bye-teams ul { display: flex; flex-wrap: wrap; gap: 12px 24px; list-style: none; padding: 0; margin: 0; }
+.bye-teams li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.bye-teams img { width: 30px; height: 30px; object-fit: contain; }

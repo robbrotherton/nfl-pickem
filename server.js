@@ -216,7 +216,7 @@ app.use('/api', (req, res, next) => {
 const scoreboardCache = new Map();
 const scoreboardPending = new Map();
 app.get('/api/espn/scoreboard', async (req, res) => {
-    const allowed = { dates: /^\d{4}$/, seasontype: /^[123]$/, week: /^\d{1,2}$/ };
+    const allowed = { dates: /^\d{4}$/, seasontype: /^[123]$/, week: /^\d{1,2}$/, refresh: /^1$/ };
     for (const [key, value] of Object.entries(req.query)) {
         if (!allowed[key] || !allowed[key].test(String(value)) || Array.isArray(value)) {
             return res.status(400).json({ error: 'Invalid scoreboard query.' });
@@ -226,11 +226,11 @@ app.get('/api/espn/scoreboard', async (req, res) => {
         (req.query.week && (Number(req.query.week) < 1 || Number(req.query.week) > weekCount(Number(req.query.dates) || new Date().getFullYear(), Number(req.query.seasontype) || 2)))) {
         return res.status(400).json({ error: 'Invalid scoreboard season/week.' });
     }
-    const query = new URLSearchParams(Object.entries(req.query).sort()).toString();
+    const query = new URLSearchParams(Object.entries(req.query).filter(([key]) => key !== 'refresh').sort()).toString();
     const url = `${ESPN_SCOREBOARD_BASE}${query ? '?' + query : ''}`;
     try {
         let entry = scoreboardCache.get(url);
-        if (!entry || Date.now() - entry.time > 60000) {
+        if (req.query.refresh === '1' || !entry || Date.now() - entry.time > 60000) {
             let pending = scoreboardPending.get(url);
             if (!pending) {
                 pending = (async () => {
@@ -516,6 +516,25 @@ app.delete('/api/week-players/:season/:week/:player', (req, res) => {
 });
 
 // Get games for a week
+
+// Find earlier weeks that still contain a game whose kickoff has passed.
+app.get('/api/unfinished-weeks/:season/:seasonType/:week', (req, res) => {
+    const { season, seasonType, week } = req.params;
+    if (!/^\d{4}$/.test(season) || !/^[123]$/.test(seasonType) || !/^\d{1,2}$/.test(week) || Number(week) < 1 || Number(week) > 22) {
+        return res.status(400).json({ error: 'Invalid season, type, or week.' });
+    }
+    try {
+        const weeks = db.prepare(`SELECT DISTINCT season, season_type, week FROM games
+            WHERE (status IS NULL OR status != 'final' OR away_score IS NULL OR home_score IS NULL)
+              AND datetime(game_date) <= datetime('now')
+              AND (season < ? OR (season = ? AND (season_type < ? OR (season_type = ? AND week < ?))))
+            ORDER BY season DESC, season_type DESC, week DESC`).all(season, season, seasonType, seasonType, week);
+        res.json(weeks);
+    } catch (error) {
+        console.error('Error fetching unfinished weeks:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Get all games for a week (with optional playoff filter)
 app.get('/api/games/:season/:week', (req, res) => {

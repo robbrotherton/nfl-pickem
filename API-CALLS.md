@@ -13,7 +13,11 @@ The selected week always loads from `/api/games/:season/:week?season_type=TYPE` 
 - Stored games, all final or all unfinished kickoffs still in the future: render from DB, with no ESPN call.
 - Stored games with an `in_progress` status or an unfinished game whose kickoff has passed: render from DB, then refresh the scoreboard in the background. Elapsed kickoff is checked because a cached `scheduled` status may be outdated. Failed refreshes retain the stored schedule; completed refreshes update scores/picks. Leaving the week or opening the leaderboard prevents a delayed response from replacing that view.
 - Empty week: fetch ESPN, save games, then render. There is no stored schedule to display yet.
-- Click the Game header: explicitly fetch that week's scoreboard, save it, and update the view.
+- Click the Game header: explicitly fetch that week's scoreboard, bypass its 60-second server cache with `refresh=1`, save it, and update the view. Concurrent requests still share an upstream fetch.
+
+Schedule requests have a 15-second deadline, including response bodies and the local writes/reads used during refresh. Hiding or leaving the page cancels the active refresh and releases the button; cancelled results cannot replace the visible schedule. Failures retain the schedule and show a retry message, including future weeks.
+
+Every regular-season schedule render reads the season's stored games to use each team's most complete saved overall record, instead of the snapshot attached to a future game. This adds no ESPN request. It also lists teams absent from the selected week below the schedule when all 32 teams are known locally. Bye lists are omitted for preseason/postseason and incomplete league directories.
 
 There is no score polling timer. Automatic refresh happens when the schedule loads; manual refresh remains available. Already final games are trusted until a manual refresh, including later score corrections. Future kickoff changes likewise require manual refresh.
 
@@ -23,7 +27,7 @@ If no usable current-season schedule is stored, startup retains ESPN season disc
 
 | ESPN request | Trigger and purpose | Sharing/cache |
 | --- | --- | --- |
-| Site API `/scoreboard?dates=YEAR&week=WEEK&seasontype=TYPE` | Missing selected week, background score update after kickoff, or manual Game-header refresh | Same query cached in server memory for 60 seconds; simultaneous requests share one fetch; cache resets on server restart |
+| Site API `/scoreboard?dates=YEAR&week=WEEK&seasontype=TYPE` | Missing selected week, background score update after kickoff, or manual Game-header refresh | Same query cached in server memory for 60 seconds (manual refresh bypasses cache); simultaneous requests share one fetch; cache resets on server restart |
 | Site API `/scoreboard` | Startup fallback when current-season dates are unavailable locally; selects current season/type/week | Same 60-second server cache; season info reused within the browser page |
 | Site API week-one scoreboard | Startup fallback to discover a released season or obtain its calendar | Same 60-second server cache; calendar reused within the browser page |
 | Site API `/injuries` | An upcoming matchup needs a current report, or successful scoreboard fetch starts pregame archiving | **One league-wide feed**, shared across teams, matchups, and users; 6 hours, tightened to 30 minutes within 6 hours of an upcoming stored kickoff |

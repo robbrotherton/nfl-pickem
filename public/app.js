@@ -14,6 +14,112 @@ let displayedScoreContext = null;
 let displayedScores = new Map();
 let displayedScoreGames = [];
 let scoreRefreshError = false;
+let matchupResizeObserver = null;
+let matchupBoundaryObservers = [];
+let matchupScrollCleanup = null;
+
+function initMatchupScrolling(scrollLeft = 0) {
+    matchupResizeObserver?.disconnect();
+    matchupScrollCleanup?.();
+    matchupBoundaryObservers.forEach(observer => observer.disconnect());
+    matchupBoundaryObservers = [];
+    const shell = document.querySelector('.matchup-shell');
+    if (!shell) return;
+    const scroller = shell.querySelector('.matchup-body-scroll');
+    const table = scroller.querySelector('table');
+    const originalHeader = table.querySelector('thead');
+    const headerViewport = shell.querySelector('.matchup-header');
+    const headerSlot = shell.querySelector('.matchup-header-slot');
+    const topMask = shell.querySelector('.matchup-top-mask');
+    const startMarker = shell.querySelector('.matchup-start-marker');
+    const endMarker = shell.querySelector('.matchup-end-marker');
+    const headerTable = document.createElement('table');
+    headerTable.className = 'matchup-header-table';
+    headerTable.setAttribute('role', 'presentation');
+    headerTable.append(originalHeader.cloneNode(true));
+    headerViewport.append(headerTable);
+    const originalCells = [...originalHeader.querySelectorAll('th')];
+    originalCells.forEach((cell, index) => {
+        const label = index === 0 ? 'Game' : cell.textContent;
+        cell.replaceChildren();
+        const text = document.createElement('span');
+        text.className = 'matchup-sr-only';
+        text.textContent = label;
+        cell.append(text);
+        cell.setAttribute('scope', 'col');
+    });
+    const visibleCells = [...headerTable.querySelectorAll('th')];
+    visibleCells.forEach((cell, index) => {
+        cell.setAttribute('role', 'presentation');
+        if (index > 0) cell.setAttribute('aria-hidden', 'true');
+    });
+    const topInset = 12;
+    let headerHeight = 0;
+    let endObserver = null;
+    const updateFloating = () => {
+        const bounds = shell.getBoundingClientRect();
+        // Android can pan the visual viewport without scrolling the layout
+        // viewport, so intersection callbacks alone do not cover every swipe.
+        const visibleTop = (window.visualViewport?.offsetTop || 0) + topInset;
+        const floating = headerSlot.getBoundingClientRect().top < visibleTop
+            && bounds.bottom > visibleTop + headerHeight;
+        const top = floating ? `${visibleTop}px` : '';
+        if (headerViewport.style.top !== top) headerViewport.style.top = top;
+        headerViewport.classList.toggle('is-floating', floating);
+        topMask.hidden = !floating;
+        topMask.style.top = `${visibleTop - topInset}px`;
+        // Overlap by a pixel to avoid a seam at fractional device scales.
+        topMask.style.height = `${topInset + 1}px`;
+    };
+    const startObserver = new IntersectionObserver(updateFloating, {
+        rootMargin: `-${topInset}px 0px 0px 0px`, threshold: 0
+    });
+    window.addEventListener('scroll', updateFloating, { passive: true });
+    window.visualViewport?.addEventListener('scroll', updateFloating, { passive: true });
+    window.visualViewport?.addEventListener('resize', updateFloating, { passive: true });
+    matchupScrollCleanup = () => {
+        window.removeEventListener('scroll', updateFloating);
+        window.visualViewport?.removeEventListener('scroll', updateFloating);
+        window.visualViewport?.removeEventListener('resize', updateFloating);
+    };
+    startObserver.observe(startMarker);
+    matchupBoundaryObservers.push(startObserver);
+    const syncWidths = () => {
+        const bounds = shell.getBoundingClientRect();
+        shell.style.setProperty('--matchup-header-left', `${bounds.left}px`);
+        shell.style.setProperty('--matchup-header-width', `${bounds.width}px`);
+        headerTable.style.width = `${table.getBoundingClientRect().width}px`;
+        originalCells.forEach((cell, index) => {
+            visibleCells[index].style.width = `${cell.getBoundingClientRect().width}px`;
+        });
+        headerViewport.scrollLeft = scroller.scrollLeft;
+        const newHeight = headerViewport.getBoundingClientRect().height;
+        if (newHeight !== headerHeight) {
+            headerHeight = newHeight;
+            headerSlot.style.height = `${headerHeight}px`;
+            endObserver?.disconnect();
+            endObserver = new IntersectionObserver(updateFloating, {
+                rootMargin: `-${topInset + headerHeight}px 0px 0px 0px`, threshold: 0
+            });
+            endObserver.observe(endMarker);
+            matchupBoundaryObservers = [startObserver, endObserver];
+        }
+        updateFloating();
+    };
+    scroller.addEventListener('scroll', () => {
+        headerViewport.scrollLeft = scroller.scrollLeft;
+    }, { passive: true });
+    // Observe the viewport, not the scrolling content, to avoid resize loops.
+    const observer = new ResizeObserver(() => {
+        if (!shell.isConnected) { observer.disconnect(); return; }
+        syncWidths();
+    });
+    matchupResizeObserver = observer;
+    observer.observe(scroller);
+    observer.observe(headerViewport);
+    scroller.scrollLeft = scrollLeft;
+    syncWidths();
+}
 
 function updateScoreRefreshHeader() {
     const button = document.getElementById('scoreRefreshButton');
@@ -23,7 +129,7 @@ function updateScoreRefreshHeader() {
     button.setAttribute('aria-label', scoreRefresh ? 'Checking scores' : 'Refresh scores from ESPN');
     const note = document.getElementById('scoreFreshness');
     if (!note) return;
-    note.hidden = !displayedScoreGames.some(game => game.status === 'in_progress');
+    note.hidden = !scoreRefresh && !scoreRefreshError && !displayedScoreGames.some(game => game.status === 'in_progress');
     const timestamps = displayedScoreGames.filter(game => game.status === 'in_progress').map(game => {
         const value = game.last_updated;
         return value ? Date.parse(value.includes('T') ? value : value.replace(' ', 'T') + 'Z') : NaN;
@@ -458,10 +564,43 @@ function shouldRefreshGames(cachedGames) {
     return NFLSeason.shouldRefreshGames(cachedGames);
 }
 
-async function fetchAndCacheGames(week, season, seasonType = 2) {
-    const response = await fetch(`${ESPN_API_BASE}/scoreboard?dates=${season}&week=${week}&seasontype=${seasonType}`);
-    if (!response.ok) throw new Error('Unable to fetch ESPN schedule.');
-    const data = await response.json();
+async function scheduleFetch(url, options = {}, signal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) controller.abort();
+    const timeout = setTimeout(abort, 15000);
+    try {
+        const response = await fetch(url, { ...options, cache: 'no-store', signal: controller.signal });
+        // Include body reading in the deadline; headers alone do not finish a request.
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Unable to load schedule data.');
+        return data;
+    } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', abort);
+    }
+}
+
+function cancelScoreRefresh() {
+    scoreRefresh?.controller.abort();
+    scoreRefresh = null;
+    updateScoreRefreshHeader();
+}
+
+// Mobile browsers can suspend a page with a request still pending.
+window.addEventListener('pagehide', cancelScoreRefresh);
+window.addEventListener('pageshow', () => {
+    if (scoreRefresh && Date.now() - scoreRefresh.startedAt > 30000) cancelScoreRefresh();
+    updateScoreRefreshHeader();
+});
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) cancelScoreRefresh();
+    else updateScoreRefreshHeader();
+});
+
+async function fetchAndCacheGames(week, season, seasonType = 2, { signal, force = false } = {}) {
+    const data = await scheduleFetch(`${ESPN_API_BASE}/scoreboard?dates=${season}&week=${week}&seasontype=${seasonType}${force ? '&refresh=1' : ''}`, {}, signal);
     NFLSeason.assertScoreboardContext(data, season, week, seasonType);
 
     if (!data.events || data.events.length === 0) {
@@ -532,13 +671,11 @@ async function fetchAndCacheGames(week, season, seasonType = 2) {
         };
 
         // Save to database
-        const saved = await fetch(`${API_BASE}/api/games`, {
+        await scheduleFetch(`${API_BASE}/api/games`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(gameData)
-        });
-
-        if (!saved.ok) throw new Error('Unable to save game in the requested season/week/type.');
+        }, signal);
         games.push(gameData);
     }
 
@@ -568,6 +705,26 @@ async function loadGames(week, season, seasonType = 2) {
     return cachedGames;
 }
 
+// Catch up missed finals even when the displayed week has no games to refresh.
+let previousScoresRefresh = null;
+async function refreshPreviousScores(week, season, seasonType, force = false) {
+    if (previousScoresRefresh) return previousScoresRefresh;
+    previousScoresRefresh = (async () => {
+        const weeks = await scheduleFetch(`${API_BASE}/api/unfinished-weeks/${season}/${seasonType}/${week}`);
+        for (const previous of weeks) {
+            try {
+                const games = await fetchAndCacheGames(previous.week, previous.season, previous.season_type, { force });
+                if (games?.length) await scoreCompletedGames(games);
+            } catch (error) {
+                console.warn('Could not refresh an earlier week:', error);
+            }
+        }
+    })();
+    try { await previousScoresRefresh; }
+    catch (error) { console.warn('Could not check earlier weeks:', error); }
+    finally { previousScoresRefresh = null; }
+}
+
 async function forceRefreshSchedule() {
     const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const season = currentSeason;
@@ -576,22 +733,25 @@ async function forceRefreshSchedule() {
     const week = weekInfo.week;
     const seasonType = weekInfo.type;
     
-    await refreshScheduleScores(week, season, seasonType, scheduleLoadId);
+    void refreshPreviousScores(week, season, seasonType, true);
+    await refreshScheduleScores(week, season, seasonType, scheduleLoadId, true);
 }
 
-async function refreshScheduleScores(week, season, seasonType, loadId) {
+async function refreshScheduleScores(week, season, seasonType, loadId, force = false) {
     if (scoreRefresh?.loadId === loadId) return;
-    const request = { loadId };
+    cancelScoreRefresh();
+    const request = { loadId, controller: new AbortController(), startedAt: Date.now() };
     scoreRefresh = request;
     scoreRefreshError = false;
     updateScoreRefreshHeader();
     try {
-        const games = await fetchAndCacheGames(week, season, seasonType);
+        const games = await fetchAndCacheGames(week, season, seasonType, { signal: request.controller.signal, force });
+        if (request.controller.signal.aborted || scoreRefresh !== request) return;
         if (!games?.length) throw new Error('No scores returned.');
         if (scheduleLoadId !== loadId) return;
-        await loadSchedule({ games });
+        await loadSchedule({ games, signal: request.controller.signal });
     } catch (error) {
-        if (scheduleLoadId === loadId) scoreRefreshError = true;
+        if (scheduleLoadId === loadId && scoreRefresh === request) scoreRefreshError = true;
         console.warn('Score refresh failed; keeping stored schedule:', error);
     } finally {
         if (scoreRefresh === request) {
@@ -605,7 +765,7 @@ async function scoreCompletedGames(games) {
     for (const game of games) {
         if (game.status === 'final' && game.winner) {
             // Score picks for this game
-            await fetch(`${API_BASE}/api/score-picks`, {
+            await scheduleFetch(`${API_BASE}/api/score-picks`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -622,20 +782,18 @@ async function scoreCompletedGames(games) {
 // ========================================
 
 async function loadWeekPlayers(season, week, seasonType) {
-    const response = await fetch(`${API_BASE}/api/week-players/${season}/${week}?season_type=${seasonType}`);
-    let players = await response.json();
+    let players = await scheduleFetch(`${API_BASE}/api/week-players/${season}/${week}?season_type=${seasonType}`);
     
     // If no players for this week, copy from previous week
     if (!players || players.length === 0) {
         const prevWeek = week - 1;
         if (prevWeek > 0) {
-            const prevResponse = await fetch(`${API_BASE}/api/week-players/${season}/${prevWeek}?season_type=${seasonType}`);
-            const prevPlayers = await prevResponse.json();
+            const prevPlayers = await scheduleFetch(`${API_BASE}/api/week-players/${season}/${prevWeek}?season_type=${seasonType}`);
             
             if (prevPlayers && prevPlayers.length > 0) {
                 // Copy to current week
                 for (const player of prevPlayers) {
-                    await fetch(`${API_BASE}/api/week-players`, {
+                    await scheduleFetch(`${API_BASE}/api/week-players`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -679,8 +837,7 @@ async function removePlayerFromWeek(playerName) {
 }
 
 async function loadPastPlayers() {
-    const response = await fetch(`${API_BASE}/api/players`);
-    const players = await response.json();
+    const players = await scheduleFetch(`${API_BASE}/api/players`);
     return players;
 }
 
@@ -790,7 +947,7 @@ async function addPlayerByName(playerName) {
         : 1;
     
     // Add player
-    await fetch(`${API_BASE}/api/week-players`, {
+    await scheduleFetch(`${API_BASE}/api/week-players`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -816,8 +973,7 @@ function renderActivePlayersUI(weekPlayers) {
 // ========================================
 
 async function loadPicksForWeek(week, season, seasonType) {
-    const response = await fetch(`${API_BASE}/api/picks/${season}/${week}?season_type=${seasonType}`);
-    const picks = await response.json();
+    const picks = await scheduleFetch(`${API_BASE}/api/picks/${season}/${week}?season_type=${seasonType}`);
     
     // Organize picks by player and game
     const organized = {};
@@ -919,7 +1075,7 @@ async function exitAdminMode() {
 // SCHEDULE RENDERING
 // ========================================
 
-async function loadSchedule({ games: refreshedGames } = {}) {
+async function loadSchedule({ games: refreshedGames, signal } = {}) {
     const loadId = ++scheduleLoadId;
     const weekSelect = document.getElementById('weekSelectTitle') || document.getElementById('weekSelect');
     const content = document.getElementById('content');
@@ -929,7 +1085,7 @@ async function loadSchedule({ games: refreshedGames } = {}) {
     adminMode = false;
     
     if (!refreshedGames) {
-        scoreRefresh = null;
+        cancelScoreRefresh();
         scoreRefreshError = false;
         content.innerHTML = '<div class="loading">Loading schedule...</div>';
     }
@@ -957,7 +1113,7 @@ async function loadSchedule({ games: refreshedGames } = {}) {
         
         // Load games (from cache or ESPN)
         const games = refreshedGames || await loadGames(week, season, seasonType);
-        if (loadId !== scheduleLoadId) return;
+        if (loadId !== scheduleLoadId || signal?.aborted) return;
         
         if (!games || games.length === 0) {
             content.innerHTML = `<div class="error">No games found for ${weekLabel}.<br>Try selecting a different week.</div>`;
@@ -974,12 +1130,12 @@ async function loadSchedule({ games: refreshedGames } = {}) {
         await loadPastPlayers();
         
         // Update UI - dropdowns handle the title display
-        if (loadId !== scheduleLoadId) return;
+        if (loadId !== scheduleLoadId || signal?.aborted) return;
         renderActivePlayersUI(weekPlayers);
         
         // Render schedule
-        await renderScheduleTable(games, weekPlayers, season, week, seasonType, loadId);
-        if (loadId !== scheduleLoadId) return;
+        await renderScheduleTable(games, weekPlayers, season, week, seasonType, loadId, signal);
+        if (loadId !== scheduleLoadId || signal?.aborted) return;
         
         // Update view button states
         document.getElementById('picksViewBtn').classList.add('active');
@@ -988,19 +1144,35 @@ async function loadSchedule({ games: refreshedGames } = {}) {
         // Show week navigation row when showing picks
         document.querySelector('.week-title-row').style.display = 'flex';
 
+        if (!refreshedGames) void refreshPreviousScores(week, season, seasonType);
         if (!refreshedGames && shouldRefreshGames(games)) {
             void refreshScheduleScores(week, season, seasonType, loadId);
         }
         
     } catch (error) {
-        if (loadId !== scheduleLoadId) return;
+        if (loadId !== scheduleLoadId || signal?.aborted) return;
+        if (refreshedGames) {
+            scoreRefreshError = true;
+            updateScoreRefreshHeader();
+            return;
+        }
         content.innerHTML = `<div class="error">Error loading schedule: ${error.message}<br>Check console (F12) for details.</div>`;
         console.error('Error:', error);
     }
 }
 
-async function renderScheduleTable(games, weekPlayers, season, week, seasonType, loadId) {
+async function renderScheduleTable(games, weekPlayers, season, week, seasonType, loadId, signal) {
     const allPicks = await loadPicksForWeek(week, season, seasonType);
+    let teamContext = { records: {}, byes: [] };
+    if (seasonType === 2) {
+        try {
+            const seasonGames = await scheduleFetch(`${API_BASE}/api/games/${season}?season_type=2`);
+            teamContext = NFLSchedule.teamContext(seasonGames, games, season, week);
+        } catch (error) {
+            console.warn('Unable to load season records and bye teams:', error);
+        }
+    }
+    const recordFor = (game, side) => teamContext.records[game[`${side}_team`]] || game[`${side}_record`];
     const playerNames = weekPlayers.map(p => p.player_name);
     
     const scoreContext = `${season}:${seasonType}:${week}`;
@@ -1011,7 +1183,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
         const changed = previous && previous[side] != null && value != null && Number(previous[side]) !== Number(value);
         return `<span class="team-record game-score${changed ? ' score-changed' : ''}">(${value})</span>`;
     };
-    let html = '<table><thead><tr>';
+    let html = '<div class="matchup-shell"><div class="matchup-top-mask" hidden aria-hidden="true"></div><span class="matchup-start-marker" aria-hidden="true"></span><div class="matchup-header-slot"><div class="matchup-header"></div></div><div class="matchup-body-scroll" tabindex="0" role="region" aria-label="Weekly matchups and player picks; scroll sideways for more players"><table class="matchup-table"><thead><tr>';
     html += `<th class="team-column"><button id="scoreRefreshButton" class="score-refresh-button" onclick="forceRefreshSchedule()" title="Refresh scores from ESPN" aria-label="Refresh scores from ESPN">Game <svg class="score-refresh-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.5-1L20 9M4 15l2.4 3A7 7 0 0 0 17.9 17"/></svg></button><span id="scoreFreshness" class="score-freshness" role="status" hidden></span></th>`;
 
     playerNames.forEach(name => {
@@ -1073,7 +1245,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
                     ${game.away_logo ? `<img src="${game.away_logo}" alt="${game.away_abbr || game.away_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
                     <div class="team-details">
                         <span class="team-name ${game.winner === game.away_team ? 'winner' : ''}">${game.away_abbr || game.away_team}</span>
-                        ${game.status === 'final' || game.status === 'in_progress' ? scoreMarkup(game, 'away') : game.away_record ? `<span class="team-record">${game.away_record}</span>` : ''}
+                        ${game.status === 'final' || game.status === 'in_progress' ? scoreMarkup(game, 'away') : recordFor(game, 'away') ? `<span class="team-record">${recordFor(game, 'away')}</span>` : ''}
                     </div>
                 </div>
                 <span class="vs">@</span>
@@ -1081,7 +1253,7 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
                     ${game.home_logo ? `<img src="${game.home_logo}" alt="${game.home_abbr || game.home_team}" class="team-logo" onerror="this.style.display='none'">` : ''}
                     <div class="team-details">
                         <span class="team-name ${game.winner === game.home_team ? 'winner' : ''}">${game.home_abbr || game.home_team}</span>
-                        ${game.status === 'final' || game.status === 'in_progress' ? scoreMarkup(game, 'home') : game.home_record ? `<span class="team-record">${game.home_record}</span>` : ''}
+                        ${game.status === 'final' || game.status === 'in_progress' ? scoreMarkup(game, 'home') : recordFor(game, 'home') ? `<span class="team-record">${recordFor(game, 'home')}</span>` : ''}
                     </div>
                 </div>
             </div>
@@ -1149,14 +1321,21 @@ async function renderScheduleTable(games, weekPlayers, season, week, seasonType,
         html += '</tr>';
     });
     
-    html += '</tbody></table>';
+    html += '</tbody></table></div><span class="matchup-end-marker" aria-hidden="true"></span></div>';
     
+    if (teamContext.byes.length) {
+        html += `<section class="bye-teams" aria-label="Teams on bye"><h2>Bye week</h2><ul>${teamContext.byes.map(team => `<li>${team.logo ? `<img src="${team.logo}" alt="" loading="lazy">` : ''}<span>${team.name}</span></li>`).join('')}</ul></section>`;
+    }
+
     // Add weekly leaderboard below the picks
     const weeklyLeaderboardHtml = await renderWeeklyLeaderboard(season, week, seasonType);
     html += weeklyLeaderboardHtml;
     
-    if (loadId !== scheduleLoadId) return;
+    if (loadId !== scheduleLoadId || signal?.aborted) return;
+    const scrollLeft = displayedScoreContext === scoreContext
+        ? document.querySelector('.matchup-body-scroll')?.scrollLeft || 0 : 0;
     document.getElementById('content').innerHTML = html;
+    initMatchupScrolling(scrollLeft);
     document.querySelectorAll('.score-changed').forEach(score => {
         setTimeout(() => score.classList.remove('score-changed'), 5100);
     });
@@ -1177,8 +1356,7 @@ async function renderWeeklyLeaderboard(season, week, seasonType) {
                 url += `?${seasonTypeQuery}`;
             }
         }
-        const response = await fetch(url);
-        const standings = await response.json();
+        const standings = await scheduleFetch(url);
         
         if (standings.length === 0) {
             return ''; // Don't show leaderboard if no picks scored yet

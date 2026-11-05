@@ -10,7 +10,7 @@ const seasons = require('../public/season-context');
 
 // The real routes run against an in-memory database with ESPN fully stubbed.
 // No production server, database, network request, or migration is used.
-let app, db, scoreboard, requestedWeeks = [];
+let app, db, scoreboard, scoreboardCalls = 0, requestedWeeks = [];
 const quiet = { log() {}, warn() {}, error() {} };
 const fakeExpress = () => {
     app = express();
@@ -49,7 +49,7 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'server.js'), 'utf8'), {
     },
     __dirname: root,
     URLSearchParams, AbortSignal,
-    fetch: async url => ({ ok: true, json: async () => scoreboard(new URL(url).searchParams) }),
+    fetch: async url => { scoreboardCalls++; assert.equal(new URL(url).searchParams.has("refresh"), false); return { ok: true, json: async () => scoreboard(new URL(url).searchParams) }; },
     console: quiet,
     process: { env: {}, on() {} },
     setTimeout(callback) { callback(); }
@@ -67,9 +67,20 @@ const game = (id, season, type, week = 1) => ({
         return { status: response.status, body: await response.json() };
     }
     try {
+        scoreboard = () => ({ season: { year: 2026, type: 2 }, week: { number: 7 }, events: [] });
+        const scoreboardRoute = '/api/espn/scoreboard?dates=2026&seasontype=2&week=7';
+        assert.equal((await call(scoreboardRoute)).status, 200);
+        assert.equal((await call(scoreboardRoute)).status, 200);
+        assert.equal(scoreboardCalls, 1);
+        assert.equal((await call(scoreboardRoute + '&refresh=1')).status, 200);
+        assert.equal(scoreboardCalls, 2);
+        assert.equal((await call(scoreboardRoute + '&refresh=bad')).status, 400);
         for (const row of [game('pre',2026,1),game('reg',2026,2),game('post',2026,3),game('old',2025,2)]) {
             assert.equal((await call('/api/games','POST',row)).status,200);
         }
+        const unfinished = await call('/api/unfinished-weeks/2026/2/2');
+        assert.deepEqual(unfinished.body.map(row => [row.season, row.season_type, row.week]), [[2026, 1, 1], [2026, 2, 1], [2025, 2, 1]].sort((a,b) => b[0]-a[0] || b[1]-a[1] || b[2]-a[2]));
+        assert.equal((await call('/api/unfinished-weeks/2026/2/0')).status, 400);
         const ids = result => result.body.map(g => g.id);
         assert.deepEqual(ids(await call('/api/games/2026/team/Chicago%20Bears')), ['reg']);
         assert.deepEqual(ids(await call('/api/games/2026/team/Chicago%20Bears?season_type=1')), ['pre']);
@@ -149,7 +160,7 @@ const game = (id, season, type, week = 1) => ({
     seasons.assertScoreboardContext({season:{year:2026,type:3},week:{number:1},events:[{date:'2027-01-10'}]},2026,1,3);
 
     const elements = new Map(['gameHistoryModal','gameHistoryTitle','gameHistoryBody','weekSelectTitle'].map(id=>[id,{classList:{add(){}},value:'2:1'}]));
-    const client = vm.createContext({NFLSeason:seasons,console:quiet,Date,Map,window:{addEventListener(){}}, document:{getElementById:id=>elements.get(id)}});
+    const client = vm.createContext({NFLSeason:seasons,console:quiet,Date,Map,AbortController,setTimeout,clearTimeout,window:{addEventListener(){}}, document:{addEventListener(){},getElementById:id=>elements.get(id)}});
     vm.runInContext(fs.readFileSync(path.join(root,'public/app.js'),'utf8'),client);
     const urls=[];
     client.fetch=async url=>{urls.push(url);return {ok:true,json:async()=>[]};};
@@ -178,7 +189,7 @@ const game = (id, season, type, week = 1) => ({
     const freshness = {};
     elements.set('scoreRefreshButton', refreshButton);
     elements.set('scoreFreshness', freshness);
-    vm.runInContext("displayedScoreGames=[{status:'scheduled'}];updateScoreRefreshHeader()",client);
+    vm.runInContext("scoreRefreshError=false;displayedScoreGames=[{status:'scheduled'}];updateScoreRefreshHeader()",client);
     assert.equal(freshness.hidden,true);
     vm.runInContext("scoreRefreshError=false;displayedScoreGames=[{status:'in_progress',last_updated:new Date(Date.now()-120000).toISOString()}];updateScoreRefreshHeader()",client);
     assert.equal(freshness.hidden,false);
